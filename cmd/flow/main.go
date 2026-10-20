@@ -30,7 +30,32 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: false,
 	}
 	root.AddCommand(newSetupCmd())
+	root.AddCommand(newDevCmd())
 	return root
+}
+
+// bootstrap resolve o App para o repo corrente, com saída no stdout do comando.
+func bootstrap(cmd *cobra.Command) (*flow.App, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	return flow.Bootstrap(wd, flow.Deps{Out: cmd.OutOrStdout()})
+}
+
+func newDevCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "dev",
+		Short: "Aplica os commits do PR da branch atual no ambiente dev",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			app, err := bootstrap(cmd)
+			if err != nil {
+				return err
+			}
+			return app.Dev()
+		},
+	}
 }
 
 func newSetupCmd() *cobra.Command {

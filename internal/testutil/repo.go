@@ -65,10 +65,28 @@ func (r *Repo) runOnWork(args ...string) string {
 	return runGit(r.T, "", append([]string{"-C", r.Dir}, args...)...)
 }
 
+// RunGit executa um comando git arbitrário no clone de trabalho (falha o teste em erro).
+func (r *Repo) RunGit(args ...string) string {
+	r.T.Helper()
+	return r.runOnWork(args...)
+}
+
 // WriteFile escreve/atualiza um arquivo no clone.
 func (r *Repo) WriteFile(rel, content string) {
 	r.T.Helper()
 	p := filepath.Join(r.Dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		r.T.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		r.T.Fatalf("write %s: %v", rel, err)
+	}
+}
+
+// WriteFileAt escreve um arquivo sob um diretório arbitrário (ex.: worktree).
+func (r *Repo) WriteFileAt(dir, rel, content string) {
+	r.T.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		r.T.Fatalf("mkdir: %v", err)
 	}
