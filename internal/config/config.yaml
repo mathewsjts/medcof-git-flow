@@ -1,0 +1,31 @@
+# Configuração embutida do CLI flow (versionada neste repo, via go:embed).
+# NÃO há arquivo de config nos repositórios das apps: tudo mora aqui.
+#
+# Cada repo é identificado por "owner/repo" (normalizado de `git remote get-url origin`).
+#   environments: mapeia o nome lógico (dev/hom) para a branch real de deploy.
+#   production:   branch de produção (merge do PR = deploy; fora do escopo do CLI).
+#   shared:       true quando o repo é compartilhado com outros times; desabilita `flow rebuild`.
+#   verify:       lista de comandos em formato argv, executados em sequência SEM shell, no worktree.
+repos:
+  MedCof-Tech/app-apollo-api:
+    environments: { dev: dev, hom: hom }
+    production: main
+    shared: true
+    verify:
+      - [npm, run, typecheck]
+      - [npm, run, lint]
+  MedCof-Tech/app-aulas-ui:
+    environments: { dev: develop, hom: hom }
+    production: main
+    shared: true
+    verify:
+      - [npm, run, typecheck]
+      - [npm, run, lint]
+  MedCof-Tech/app-aqfm-api:
+    environments: { dev: dev, hom: hom }
+    production: main
+    shared: true
+    verify:
+      - [npm, run, typecheck]
+      # O script `lint` do repo é `biome lint --write` (modifica arquivos); no gate usamos `check`.
+      - [npx, biome, check, .]
