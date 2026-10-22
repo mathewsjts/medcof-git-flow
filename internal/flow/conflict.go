@@ -11,7 +11,7 @@ import (
 // branch do ambiente alinhada a origin, e para no cherry-pick que conflita. A
 // branch local do ambiente é descartada; commits dela que não estão em nenhuma
 // branch do origin ficam guardados numa branch flow-backup/.
-// Daí em diante é git puro: resolver, `git cherry-pick --continue` e rodar o
+// Daí em diante é git puro: resolver, `git cherry-pick --continue --no-edit` e rodar o
 // comando de novo, que envia a branch do ambiente (veja pushResolution).
 func (a *App) openConflict(env Env, t Target, pending []git.LogCommit, failed git.LogCommit) error {
 	rerun := fmt.Sprintf("flow %s %s", env.Logical, t.Arg())
@@ -62,7 +62,8 @@ func (a *App) openConflict(env Env, t Target, pending []git.LogCommit, failed gi
 	a.UI.Info("  Para resolver:")
 	a.UI.Info("    # edite os arquivos e remova os marcadores de conflito")
 	a.UI.Info("    git add <arquivos>")
-	a.UI.Info("    git cherry-pick --continue   # segue com os commits restantes (pode parar de novo)")
+	a.UI.Info("    git cherry-pick --continue --no-edit   # faz o commit e segue com os restantes (pode parar de novo)")
+	a.UI.Info("    # não use `git commit`: o --continue já commita mantendo a mensagem original")
 	a.UI.Info("    %s   # envia %s e aplica o que faltar", rerun, env.Branch)
 	a.UI.Info("")
 	a.UI.Info("  Para desistir: git cherry-pick --abort (nada foi enviado ao remoto)")

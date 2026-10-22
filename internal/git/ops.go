@@ -198,9 +198,11 @@ func (g *Git) SwitchReset(branch, startPoint string) error {
 	return g.RunOK("switch", "-C", branch, startPoint)
 }
 
-// Push envia refspec para origin.
+// Push envia refspec para origin sem rodar hooks: os pre-push dos repos validam
+// a feature com as dependências instaladas, o que não vale para a branch do
+// ambiente (nem existe no worktree temporário); o ambiente valida no CI.
 func (g *Git) Push(refspec string) error {
-	return g.RunOK("push", "origin", refspec)
+	return g.RunOK("push", "--no-verify", "origin", refspec)
 }
 
 // Rebase rebaseia a branch corrente sobre upstream (pode conflitar → erro).

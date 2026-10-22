@@ -75,9 +75,13 @@ A partir daí é git puro:
 ```sh
 # edite os arquivos e remova os marcadores de conflito
 git add <arquivos>
-git cherry-pick --continue   # segue com os commits restantes (pode parar de novo)
-flow dev 123                 # envia a dev e aplica o que faltar
+git cherry-pick --continue --no-edit   # commita e segue com os restantes (pode parar de novo)
+flow dev 123                           # envia a dev e aplica o que faltar
 ```
+
+Não rode `git commit`: o `--continue` já faz o commit, mantendo a mensagem
+original e a linha `(cherry picked from commit X)` que o flow usa para saber o
+que já foi aplicado. O `--no-edit` evita abrir o editor.
 
 Ao re-rodar, o flow vê que a sua branch local do ambiente está à frente do
 `origin` só com cherry-picks dessa feature, faz o push dela e aplica o que

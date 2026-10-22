@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -50,4 +51,19 @@ func TestPushWithRetryRebasesOnConcurrency(t *testing.T) {
 	if _, ok := r.FileOnOrigin("dev", "y.txt"); !ok {
 		t.Error("y.txt ausente em origin/dev após retry")
 	}
+}
+
+func TestDevPushIgnoresPrePushHook(t *testing.T) {
+	r := testutil.NewRepo(t)
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	hook := filepath.Join(r.G.Dir(), ".git", "hooks", "pre-push")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	app, _ := testApp(t, r, testutil.NewGHMock())
+
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	envHasFile(t, r, "dev", "src/a.txt", "a1")
 }
