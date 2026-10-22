@@ -27,6 +27,24 @@ func TestDevByPRNumber(t *testing.T) {
 	}
 }
 
+func TestDevByPRURL(t *testing.T) {
+	r := testutil.NewRepo(t)
+	gh := testutil.NewGHMock()
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	openPR(gh, 70, "feature/x")
+	app, _ := testApp(t, r, gh)
+
+	if err := app.Dev("https://github.com/Test/App/pull/70/files"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	envHasFile(t, r, "dev", "src/a.txt", "a1")
+
+	err := app.Dev("https://github.com/outro/repo/pull/70")
+	if err == nil || !strings.Contains(err.Error(), "este repositório é test/app") {
+		t.Fatalf("esperava recusa de PR de outro repo, veio: %v", err)
+	}
+}
+
 func TestDevByBranchWithoutPR(t *testing.T) {
 	r := testutil.NewRepo(t)
 	featureBranch(r, [2]string{"src/a.txt", "a1\n"})

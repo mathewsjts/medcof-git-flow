@@ -26,7 +26,7 @@ make dist         # binários para windows/amd64, darwin/arm64, darwin/amd64, li
 
 ## Comandos
 
-`[pr|branch]` aceita o número do PR (`123` ou `#123`) ou o nome da branch. Sem
+`[pr|branch]` aceita o PR (`123`, `#123` ou a URL dele) ou o nome da branch. Sem
 argumento, usa a branch atual.
 
 | Comando | O que faz |

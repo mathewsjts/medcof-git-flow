@@ -2,6 +2,7 @@ package flow
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -34,10 +35,30 @@ func (t Target) Arg() string {
 	return t.Branch
 }
 
-// resolveTarget interpreta o argumento de dev/hom/status: número de PR ("123"
-// ou "#123"), nome de branch ou, vazio, a branch atual. Espera o fetch já feito.
+var rePRURL = regexp.MustCompile(`^https?://github\.com/([^/]+/[^/]+)/pull/(\d+)`)
+
+// prNumber reconhece um PR no argumento: "123", "#123" ou a URL do PR (que
+// precisa ser deste repositório).
+func (a *App) prNumber(arg string) (int, bool, error) {
+	if m := rePRURL.FindStringSubmatch(arg); m != nil {
+		if !strings.EqualFold(m[1], a.Repo.Name) {
+			return 0, false, fmt.Errorf("o PR %s é de %s, mas este repositório é %s", arg, m[1], a.Repo.Name)
+		}
+		n, _ := strconv.Atoi(m[2])
+		return n, true, nil
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(arg, "#"))
+	return n, err == nil, nil
+}
+
+// resolveTarget interpreta o argumento de dev/hom/status: PR ("123", "#123" ou
+// a URL), nome de branch ou, vazio, a branch atual. Espera o fetch já feito.
 func (a *App) resolveTarget(arg string) (Target, error) {
-	if n, err := strconv.Atoi(strings.TrimPrefix(arg, "#")); err == nil {
+	n, isPR, err := a.prNumber(arg)
+	if err != nil {
+		return Target{}, err
+	}
+	if isPR {
 		pr, err := a.GH.PR(n)
 		if err != nil {
 			return Target{}, err
