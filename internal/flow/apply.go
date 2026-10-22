@@ -32,21 +32,29 @@ func (a *App) Env(logical string) (Env, error) {
 }
 
 // featureCommits devolve os commits de produção..ref, do mais antigo ao mais
-// novo. Recusa merge commits e commits com "(cherry picked from commit X)":
-// são sinal de branch criada a partir de dev/hom (ou que fez merge deles), e
-// levariam a história própria do ambiente para os outros ambientes e para main.
+// novo. Merges de produção na feature são pulados: não trazem nada além de
+// produção (exceto resolução de conflito, que fica de fora). Recusa os demais
+// merge commits e commits com "(cherry picked from commit X)": são sinal de
+// branch criada a partir de dev/hom (ou que fez merge deles), e levariam a
+// história própria do ambiente para os outros ambientes e para main.
 func (a *App) featureCommits(ref string) ([]git.LogCommit, error) {
-	commits, err := a.Git.Log("origin/"+a.Repo.Production+".."+ref, true)
+	prod := "origin/" + a.Repo.Production
+	all, err := a.Git.Log(prod+".."+ref, true)
 	if err != nil {
 		return nil, err
 	}
+	var commits []git.LogCommit
 	var bad []string
-	for _, c := range commits {
+	for _, c := range all {
 		switch {
+		case len(c.Parents) > 1 && a.allIn(c.Parents[1:], prod):
+			continue
 		case len(c.Parents) > 1:
 			bad = append(bad, fmt.Sprintf("  %s %s (merge commit)", c.Short(), c.Subject()))
 		case cherryFrom(c) != "":
 			bad = append(bad, fmt.Sprintf("  %s %s (cherry-pick)", c.Short(), c.Subject()))
+		default:
+			commits = append(commits, c)
 		}
 	}
 	if len(bad) > 0 {
@@ -54,6 +62,16 @@ func (a *App) featureCommits(ref string) ([]git.LogCommit, error) {
 			strings.Join(bad, "\n"), a.Repo.Production, a.Repo.Production)
 	}
 	return commits, nil
+}
+
+// allIn informa se todos os parents já estão em ref.
+func (a *App) allIn(parents []string, ref string) bool {
+	for _, p := range parents {
+		if !a.Git.IsAncestor(p, ref) {
+			return false
+		}
+	}
+	return true
 }
 
 // missing separa os commits da feature entre os que faltam no ambiente e os que

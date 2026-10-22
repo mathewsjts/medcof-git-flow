@@ -201,6 +201,32 @@ func TestDevCarriesDependencyCommits(t *testing.T) {
 	envHasFile(t, r, "dev", "src/x.txt", "x")
 }
 
+func TestDevSkipsMergeFromProduction(t *testing.T) {
+	r := testutil.NewRepo(t)
+
+	// feature atualizada com merge da main, que andou depois da criação.
+	r.Checkout("feature/x", true)
+	r.CommitFile("src/a.txt", "a1\n", "feat: a")
+	r.Checkout("main", false)
+	r.CommitFile("src/m.txt", "m1\n", "feat: main")
+	r.Push("main")
+	r.Checkout("feature/x", false)
+	r.RunGit("merge", "--no-ff", "-m", "Merge branch 'main' into feature/x", "main")
+	r.CommitFile("src/b.txt", "b1\n", "feat: b")
+	r.Push("feature/x")
+	r.Checkout("main", false)
+
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	envHasFile(t, r, "dev", "src/a.txt", "a1")
+	envHasFile(t, r, "dev", "src/b.txt", "b1")
+	if got := pickedCount(t, r, "dev"); got != 2 {
+		t.Fatalf("commits aplicados em dev = %d, queria 2", got)
+	}
+}
+
 func TestDevRejectsMergeCommits(t *testing.T) {
 	r := testutil.NewRepo(t)
 

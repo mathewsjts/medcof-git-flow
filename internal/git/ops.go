@@ -27,6 +27,11 @@ func (g *Git) MergeBase(a, b string) (string, error) {
 	return g.Run("merge-base", a, b)
 }
 
+// IsAncestor informa se ancestor é ancestral de (ou igual a) rev.
+func (g *Git) IsAncestor(ancestor, rev string) bool {
+	return g.RunOK("merge-base", "--is-ancestor", ancestor, rev) == nil
+}
+
 // RevListRange devolve os SHAs do intervalo (ex.: "base..head"), do mais antigo
 // ao mais novo quando reverse=true. Exclui merges se noMerges=true.
 func (g *Git) RevListRange(rng string, reverse, noMerges bool) ([]string, error) {
