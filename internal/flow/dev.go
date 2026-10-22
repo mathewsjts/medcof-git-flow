@@ -5,18 +5,27 @@ import "fmt"
 // Dev aplica em dev os commits do alvo (PR, branch ou branch atual) que ainda
 // não estão lá.
 func (a *App) Dev(arg string) error {
-	env, err := a.Env("dev")
-	if err != nil {
-		return err
-	}
-	if err := a.Git.Fetch(); err != nil {
-		return fmt.Errorf("falha no fetch: %w", err)
-	}
-	t, err := a.resolveTarget(arg)
+	env, t, err := a.prepare("dev", arg)
 	if err != nil {
 		return err
 	}
 	return a.propagate(env, t)
+}
+
+// prepare resolve o ambiente, atualiza o origin e resolve o alvo.
+func (a *App) prepare(logical, arg string) (Env, Target, error) {
+	env, err := a.Env(logical)
+	if err != nil {
+		return Env{}, Target{}, err
+	}
+	if err := a.Git.Fetch(); err != nil {
+		return Env{}, Target{}, fmt.Errorf("falha no fetch: %w", err)
+	}
+	t, err := a.resolveTarget(arg)
+	if err != nil {
+		return Env{}, Target{}, err
+	}
+	return env, t, nil
 }
 
 // propagate envia uma resolução de conflito pendente, se houver, e aplica no

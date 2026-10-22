@@ -31,6 +31,7 @@ func newRootCmd() *cobra.Command {
 	}
 	root.AddCommand(newSetupCmd())
 	root.AddCommand(newDevCmd())
+	root.AddCommand(newHomCmd())
 	return root
 }
 
@@ -54,6 +55,21 @@ func newDevCmd() *cobra.Command {
 				return err
 			}
 			return app.Dev(argOrEmpty(args))
+		},
+	}
+}
+
+func newHomCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "hom [pr|branch]",
+		Short: "Aplica em hom os commits de um PR aprovado (padrão: PR da branch atual)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := bootstrap(cmd)
+			if err != nil {
+				return err
+			}
+			return app.Hom(argOrEmpty(args))
 		},
 	}
 }
