@@ -32,6 +32,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newSetupCmd())
 	root.AddCommand(newDevCmd())
 	root.AddCommand(newHomCmd())
+	root.AddCommand(newStatusCmd())
 	return root
 }
 
@@ -70,6 +71,21 @@ func newHomCmd() *cobra.Command {
 				return err
 			}
 			return app.Hom(argOrEmpty(args))
+		},
+	}
+}
+
+func newStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status [pr|branch]",
+		Short: "Mostra em quais ambientes estão os commits do PR ou da branch (padrão: branch atual)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			app, err := bootstrap(cmd)
+			if err != nil {
+				return err
+			}
+			return app.Status(argOrEmpty(args))
 		},
 	}
 }
