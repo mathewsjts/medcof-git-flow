@@ -116,16 +116,47 @@ func TestDevConflictRefusesDirtyWorkingTree(t *testing.T) {
 	}
 }
 
-func TestDevConflictRefusesDivergedLocalEnv(t *testing.T) {
+func TestDevConflictDiscardsStaleLocalEnv(t *testing.T) {
 	r := conflictingSetup(t)
+	// dev local com commit que saiu de origin/dev mas segue em outra branch remota.
 	r.Checkout("dev", false)
 	r.RunGit("pull", "origin", "dev")
-	r.CommitFile("src/z.txt", "z\n", "chore: local não enviado")
+	r.CommitFile("src/z.txt", "z\n", "chore: reescrito em origin")
+	r.Push("dev")
+	r.RunGit("push", "origin", "dev:old")
+	r.RunGit("push", "-f", "origin", "dev~1:dev")
 	r.Checkout("main", false)
 	app, _ := testApp(t, r, testutil.NewGHMock())
 
 	err := app.Dev("feature/x")
-	if err == nil || !strings.Contains(err.Error(), "não estão em origin/dev") {
-		t.Fatalf("esperava recusa por dev local divergente, veio: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "conflito aberto em dev") {
+		t.Fatalf("esperava conflito aberto, veio: %v", err)
+	}
+	if b := strings.TrimSpace(r.RunGit("branch", "--list", "flow-backup/*")); b != "" {
+		t.Fatalf("não deveria criar backup de commits que estão no origin: %s", b)
+	}
+	if got, want := r.SHA("dev~1"), r.SHA("origin/dev"); got != want {
+		t.Fatalf("dev deveria partir de origin/dev (%s), parte de %s", want, got)
+	}
+}
+
+func TestDevConflictBacksUpLocalOnlyEnvCommits(t *testing.T) {
+	r := conflictingSetup(t)
+	r.Checkout("dev", false)
+	r.RunGit("pull", "origin", "dev")
+	local := r.CommitFile("src/z.txt", "z\n", "chore: local não enviado")
+	r.Checkout("main", false)
+	app, out := testApp(t, r, testutil.NewGHMock())
+
+	err := app.Dev("feature/x")
+	if err == nil || !strings.Contains(err.Error(), "conflito aberto em dev") {
+		t.Fatalf("esperava conflito aberto, veio: %v", err)
+	}
+	backup := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(r.RunGit("branch", "--list", "flow-backup/dev-*")), "*"))
+	if backup == "" || r.SHA(backup) != local {
+		t.Fatalf("esperava backup apontando para %s, veio %q", local, backup)
+	}
+	if !strings.Contains(out.String(), backup) {
+		t.Fatalf("a saída deveria citar o backup %s:\n%s", backup, out.String())
 	}
 }

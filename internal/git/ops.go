@@ -169,6 +169,20 @@ func (g *Git) CherryPickInProgress() bool {
 	return err == nil
 }
 
+// LocalOnly devolve os commits de rev que não estão em nenhuma branch do origin.
+func (g *Git) LocalOnly(rev string) ([]string, error) {
+	out, err := g.Run("rev-list", rev, "--not", "--remotes=origin")
+	if err != nil {
+		return nil, err
+	}
+	return Lines(out), nil
+}
+
+// CreateBranch cria branch em startPoint sem fazer checkout.
+func (g *Git) CreateBranch(branch, startPoint string) error {
+	return g.RunOK("branch", branch, startPoint)
+}
+
 // Commit cria um commit com o índice atual.
 func (g *Git) Commit(message string) error {
 	return g.RunOK("commit", "-m", message)

@@ -2,12 +2,15 @@ package flow
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/mathewsjts/medcof-git-flow/internal/git"
 )
 
 // openConflict reaplica os commits pendentes no working tree do usuário, na
-// branch do ambiente alinhada a origin, e para no cherry-pick que conflita.
+// branch do ambiente alinhada a origin, e para no cherry-pick que conflita. A
+// branch local do ambiente é descartada; commits dela que não estão em nenhuma
+// branch do origin ficam guardados numa branch flow-backup/.
 // Daí em diante é git puro: resolver, `git cherry-pick --continue` e rodar o
 // comando de novo, que envia a branch do ambiente (veja pushResolution).
 func (a *App) openConflict(env Env, t Target, pending []git.LogCommit, failed git.LogCommit) error {
@@ -22,12 +25,16 @@ func (a *App) openConflict(env Env, t Target, pending []git.LogCommit, failed gi
 		return fmt.Errorf("para abrir o conflito o working tree não pode ter mudanças em arquivos rastreados: faça commit ou `git stash` e rode `%s` de novo", rerun)
 	}
 	if a.Git.BranchExists(env.Branch) {
-		ahead, err := a.Git.RevListRange("origin/"+env.Branch+".."+env.Branch, false, false)
+		local, err := a.Git.LocalOnly(env.Branch)
 		if err != nil {
 			return err
 		}
-		if len(ahead) > 0 {
-			return fmt.Errorf("sua %s local tem %d commit(s) que não estão em origin/%s; envie ou descarte antes, porque o conflito é aberto com %s alinhada a origin", env.Branch, len(ahead), env.Branch, env.Branch)
+		if len(local) > 0 {
+			backup := fmt.Sprintf("flow-backup/%s-%s", env.Branch, time.Now().Format("20060102-150405"))
+			if err := a.Git.CreateBranch(backup, env.Branch); err != nil {
+				return err
+			}
+			a.UI.Warn("sua %s local tinha %d commit(s) que não estão no origin; guardei em %s antes de alinhar a origin/%s", env.Branch, len(local), backup, env.Branch)
 		}
 	}
 

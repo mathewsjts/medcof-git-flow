@@ -67,8 +67,10 @@ outros. A mensagem lista esses commits; a correção é refazer a base em
 Sem conflito, tudo acontece num worktree temporário e o seu working tree não é
 tocado. Quando um cherry-pick conflita, nada é enviado e o flow abre o conflito
 **no seu working tree**: faz checkout da branch do ambiente alinhada a
-`origin/<branch>`, reaplica os commits e para no que conflitou. A partir daí é
-git puro:
+`origin/<branch>`, reaplica os commits e para no que conflitou. Uma cópia local
+antiga da branch do ambiente é descartada; se ela tiver commits que não estão em
+nenhuma branch do origin, eles ficam guardados em `flow-backup/<branch>-<data>`.
+A partir daí é git puro:
 
 ```sh
 # edite os arquivos e remova os marcadores de conflito
