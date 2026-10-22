@@ -3,13 +3,20 @@ PKG     := ./cmd/flow
 DIST    := dist
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X main.version=$(VERSION)
+BINDIR  := $(HOME)/.local/bin
 
-.PHONY: all build test vet tidy dist clean
+.PHONY: all build install test vet tidy dist clean
 
 all: vet test build
 
 build:
 	go build -ldflags '$(LDFLAGS)' -o $(BINARY) $(PKG)
+
+# Link em ~/.local/bin: cada `make build` novo já atualiza o comando.
+install: build
+	@mkdir -p $(BINDIR)
+	ln -sf $(CURDIR)/$(BINARY) $(BINDIR)/$(BINARY)
+	@$(BINDIR)/$(BINARY) --version
 
 test:
 	go test ./...
