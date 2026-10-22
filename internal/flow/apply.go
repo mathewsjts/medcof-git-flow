@@ -3,9 +3,13 @@ package flow
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mathewsjts/medcof-git-flow/internal/git"
+	"github.com/mathewsjts/medcof-git-flow/internal/github"
 )
 
 // Env é um ambiente lógico resolvido para a branch real.
@@ -76,8 +80,10 @@ func (a *App) allIn(parents []string, ref string) bool {
 
 // missing separa os commits da feature entre os que faltam no ambiente e os que
 // já estão lá: por ancestralidade (mergeados no fluxo antigo), por patch-id
-// (git cherry) ou pela linha "(cherry picked from commit X)" de uma aplicação
-// anterior, inclusive as que passaram por resolução de conflito.
+// (git cherry), pela linha "(cherry picked from commit X)" de uma aplicação
+// anterior, inclusive as que passaram por resolução de conflito, por uma cópia
+// com a mesma data de autoria e título (rebase ou branch -<ambiente> do fluxo
+// antigo) ou dentro de um squash merge de PR no ambiente (fluxo antigo).
 func (a *App) missing(commits []git.LogCommit, ref, envBranch string) (pending, applied []git.LogCommit, err error) {
 	envRef := "origin/" + envBranch
 	notInEnv, err := a.Git.RevListRange(envRef+".."+ref, false, false)
@@ -92,12 +98,23 @@ func (a *App) missing(commits []git.LogCommit, ref, envBranch string) (pending, 
 	if err != nil {
 		return nil, nil, err
 	}
-	picked, err := a.pickedInto(envBranch)
+	envCommits, err := a.envCommits(envBranch)
 	if err != nil {
 		return nil, nil, err
 	}
+	picked := pickedInto(envCommits)
+	copied := copiedInto(envCommits)
+	var candidates []git.LogCommit
 	for _, c := range commits {
-		if !outside[c.SHA] || patchApplied[c.SHA] || picked(c.SHA) {
+		if !outside[c.SHA] || patchApplied[c.SHA] || picked(c.SHA) || copied[copyKey(c)] {
+			applied = append(applied, c)
+		} else {
+			candidates = append(candidates, c)
+		}
+	}
+	squashed := a.squashedInto(envCommits, candidates)
+	for _, c := range candidates {
+		if squashed(c) {
 			applied = append(applied, c)
 		} else {
 			pending = append(pending, c)
@@ -106,20 +123,80 @@ func (a *App) missing(commits []git.LogCommit, ref, envBranch string) (pending, 
 	return pending, applied, nil
 }
 
-// pickedInto devolve um teste "este SHA já foi aplicado por cherry-pick -x no
-// ambiente", olhando os commits do ambiente desde o merge-base com produção.
-func (a *App) pickedInto(envBranch string) (func(sha string) bool, error) {
+// envCommits devolve os commits do ambiente desde o merge-base com produção.
+func (a *App) envCommits(envBranch string) ([]git.LogCommit, error) {
 	envRef := "origin/" + envBranch
 	mb, err := a.Git.MergeBase("origin/"+a.Repo.Production, envRef)
 	if err != nil {
 		return nil, err
 	}
-	commits, err := a.Git.Log(mb+".."+envRef, false)
-	if err != nil {
-		return nil, err
+	return a.Git.Log(mb+".."+envRef, false)
+}
+
+// copyKey identifica um commit pela data de autoria e título, que sobrevivem às
+// cópias por cherry-pick e rebase.
+func copyKey(c git.LogCommit) string {
+	return c.AuthorDate.UTC().Format(time.RFC3339) + "|" + c.Subject()
+}
+
+// copiedInto indexa os commits do ambiente por copyKey.
+func copiedInto(envCommits []git.LogCommit) map[string]bool {
+	keys := map[string]bool{}
+	for _, c := range envCommits {
+		keys[copyKey(c)] = true
 	}
+	return keys
+}
+
+var reSquashPR = regexp.MustCompile(`\(#(\d+)\)$`)
+
+// squashedInto devolve um teste "este commit entrou no ambiente dentro de um
+// squash merge": consulta no GitHub os PRs dos squashes "... (#N)" do ambiente
+// feitos depois do commit mais antigo e casa os commits deles por data de
+// autoria e título (o GitHub trunca títulos longos com "…").
+func (a *App) squashedInto(envCommits, candidates []git.LogCommit) func(git.LogCommit) bool {
+	none := func(git.LogCommit) bool { return false }
+	if len(candidates) == 0 {
+		return none
+	}
+	since := candidates[0].AuthorDate
+	for _, c := range candidates {
+		if c.AuthorDate.Before(since) {
+			since = c.AuthorDate
+		}
+	}
+	var prCommits []github.Commit
+	for _, c := range envCommits {
+		m := reSquashPR.FindStringSubmatch(c.Subject())
+		if len(c.Parents) != 1 || m == nil || c.AuthorDate.Before(since) {
+			continue
+		}
+		n, _ := strconv.Atoi(m[1])
+		cs, err := a.GH.PRCommits(n)
+		if err != nil {
+			a.UI.Warn("não consegui ler os commits do PR #%d para checar squash: %v", n, err)
+			continue
+		}
+		prCommits = append(prCommits, cs...)
+	}
+	if len(prCommits) == 0 {
+		return none
+	}
+	return func(c git.LogCommit) bool {
+		for _, pc := range prCommits {
+			if pc.AuthoredDate.Equal(c.AuthorDate) && strings.HasPrefix(c.Subject(), strings.TrimSuffix(pc.Headline, "…")) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// pickedInto devolve um teste "este SHA já foi aplicado por cherry-pick -x no
+// ambiente".
+func pickedInto(envCommits []git.LogCommit) func(sha string) bool {
 	var from []string
-	for _, c := range commits {
+	for _, c := range envCommits {
 		if f := cherryFrom(c); f != "" {
 			from = append(from, f)
 		}
@@ -131,7 +208,7 @@ func (a *App) pickedInto(envBranch string) (func(sha string) bool, error) {
 			}
 		}
 		return false
-	}, nil
+	}
 }
 
 // applyInWorktree aplica os commits num worktree temporário destacado em

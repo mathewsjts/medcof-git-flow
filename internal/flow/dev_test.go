@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mathewsjts/medcof-git-flow/internal/github"
 	"github.com/mathewsjts/medcof-git-flow/internal/testutil"
 )
 
@@ -273,4 +274,68 @@ func TestDevRejectsBranchCreatedFromEnv(t *testing.T) {
 			t.Errorf("erro sem %q: %v", want, err)
 		}
 	}
+}
+
+func TestDevSkipsCommitsSquashedIntoEnv(t *testing.T) {
+	r := testutil.NewRepo(t)
+	featureBranch(r,
+		[2]string{"src/a.txt", "a1\n"},
+		[2]string{"src/b.txt", "b1\n"},
+	)
+	commits, err := r.G.Log("origin/main..origin/feature/x", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fluxo antigo: o primeiro commit entrou em dev num squash do PR #7, junto
+	// com um ajuste próprio de dev (patch-id diferente do commit original).
+	r.Checkout("dev", false)
+	r.WriteFile("src/a.txt", "a1\n")
+	r.WriteFile("src/dev-only.txt", "d\n")
+	r.RunGit("add", "-A")
+	r.RunGit("commit", "-q", "-m", "feat: a [dev] (#7)")
+	r.Push("dev")
+	r.Checkout("main", false)
+
+	gh := testutil.NewGHMock()
+	gh.Commits[7] = []github.Commit{{AuthoredDate: commits[0].AuthorDate, Headline: commits[0].Subject()}}
+	app, _ := testApp(t, r, gh)
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	if got := pickedCount(t, r, "dev"); got != 1 {
+		t.Fatalf("commits aplicados em dev = %d, queria só o que não veio no squash", got)
+	}
+	envHasFile(t, r, "dev", "src/b.txt", "b1")
+}
+
+func TestDevSkipsCommitsCopiedIntoEnv(t *testing.T) {
+	r := testutil.NewRepo(t)
+	featureBranch(r,
+		[2]string{"src/a.txt", "a1\n"},
+		[2]string{"src/b.txt", "b1\n"},
+	)
+	first := r.SHA("origin/feature/x~1")
+
+	// Fluxo antigo: cópia do primeiro commit numa branch feature/x-dev, ajustada
+	// na resolução de conflito (patch-id diferente) e mergeada em dev.
+	r.Checkout("dev", false)
+	r.Checkout("feature/x-dev", true)
+	r.RunGit("cherry-pick", "--no-commit", first)
+	r.WriteFile("src/dev-only.txt", "d\n")
+	r.RunGit("add", "-A")
+	r.RunGit("commit", "-q", "-C", first)
+	r.Checkout("dev", false)
+	r.RunGit("merge", "-q", "--no-ff", "-m", "Merge feature/x-dev", "feature/x-dev")
+	r.Push("dev")
+	r.Checkout("main", false)
+
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	if got := pickedCount(t, r, "dev"); got != 1 {
+		t.Fatalf("commits aplicados em dev = %d, queria só o que não tinha cópia", got)
+	}
+	envHasFile(t, r, "dev", "src/b.txt", "b1")
 }

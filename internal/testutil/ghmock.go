@@ -10,13 +10,15 @@ import (
 type GHMock struct {
 	// PRs indexado por número.
 	PRs map[int]github.PR
+	// Commits dos PRs, indexado por número.
+	Commits map[int][]github.Commit
 	// AuthErr, se != nil, faz AuthStatus falhar.
 	AuthErr error
 }
 
 // NewGHMock cria um mock vazio.
 func NewGHMock() *GHMock {
-	return &GHMock{PRs: map[int]github.PR{}}
+	return &GHMock{PRs: map[int]github.PR{}, Commits: map[int][]github.Commit{}}
 }
 
 var _ github.Client = (*GHMock)(nil)
@@ -43,4 +45,12 @@ func (m *GHMock) PRForBranch(branch, base string) (github.PR, bool, error) {
 		}
 	}
 	return github.PR{}, false, nil
+}
+
+func (m *GHMock) PRCommits(number int) ([]github.Commit, error) {
+	cs, ok := m.Commits[number]
+	if !ok {
+		return nil, fmt.Errorf("PR #%d não encontrado", number)
+	}
+	return cs, nil
 }

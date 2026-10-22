@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Fetch atualiza o remote (por padrão origin) sem tocar no working tree.
@@ -69,9 +70,10 @@ func (g *Git) CherryEquivalent(upstream, head, limit string) (map[string]bool, e
 
 // LogCommit é um commit cru lido do log (mensagem completa inclusa).
 type LogCommit struct {
-	SHA     string
-	Parents []string
-	Body    string // mensagem completa (subject + corpo + trailers)
+	SHA        string
+	Parents    []string
+	AuthorDate time.Time // preservada por cherry-pick e rebase
+	Body       string    // mensagem completa (subject + corpo + trailers)
 }
 
 // Subject devolve a primeira linha da mensagem.
@@ -98,7 +100,7 @@ const (
 // Log devolve os commits de um intervalo (ou revisão), do mais novo ao mais
 // antigo por padrão. rng pode ser "base..head" ou um ref único.
 func (g *Git) Log(rng string, reverse bool) ([]LogCommit, error) {
-	args := []string{"log", "--format=%H" + fieldSep + "%P" + fieldSep + "%B" + recordSep}
+	args := []string{"log", "--format=%H" + fieldSep + "%P" + fieldSep + "%aI" + fieldSep + "%B" + recordSep}
 	if reverse {
 		args = append(args, "--reverse")
 	}
@@ -113,18 +115,20 @@ func (g *Git) Log(rng string, reverse bool) ([]LogCommit, error) {
 		if rec == "" {
 			continue
 		}
-		parts := strings.SplitN(rec, fieldSep, 3)
-		if len(parts) < 3 {
+		parts := strings.SplitN(rec, fieldSep, 4)
+		if len(parts) < 4 {
 			continue
 		}
 		var parents []string
 		if p := strings.TrimSpace(parts[1]); p != "" {
 			parents = strings.Fields(p)
 		}
+		date, _ := time.Parse(time.RFC3339, strings.TrimSpace(parts[2]))
 		commits = append(commits, LogCommit{
-			SHA:     strings.TrimSpace(parts[0]),
-			Parents: parents,
-			Body:    strings.Trim(parts[2], "\n"),
+			SHA:        strings.TrimSpace(parts[0]),
+			Parents:    parents,
+			AuthorDate: date,
+			Body:       strings.Trim(parts[3], "\n"),
 		})
 	}
 	return commits, nil

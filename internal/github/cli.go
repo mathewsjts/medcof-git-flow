@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // CLI é a implementação real de Client sobre o executável `gh`.
@@ -107,4 +108,26 @@ func (c *CLI) PRForBranch(branch, base string) (PR, bool, error) {
 		return PR{}, false, nil
 	}
 	return ps[0].toPR(), true, nil
+}
+
+// PRCommits devolve os commits de um PR.
+func (c *CLI) PRCommits(number int) ([]Commit, error) {
+	out, err := c.run("pr", "view", strconv.Itoa(number), "--json", "commits")
+	if err != nil {
+		return nil, err
+	}
+	var p struct {
+		Commits []struct {
+			AuthoredDate    time.Time `json:"authoredDate"`
+			MessageHeadline string    `json:"messageHeadline"`
+		} `json:"commits"`
+	}
+	if err := json.Unmarshal(out, &p); err != nil {
+		return nil, fmt.Errorf("JSON inesperado de `gh pr view %d --json commits`: %w", number, err)
+	}
+	commits := make([]Commit, len(p.Commits))
+	for i, pc := range p.Commits {
+		commits[i] = Commit{AuthoredDate: pc.AuthoredDate, Headline: pc.MessageHeadline}
+	}
+	return commits, nil
 }
