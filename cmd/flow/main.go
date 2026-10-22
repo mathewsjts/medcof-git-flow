@@ -15,6 +15,9 @@ import (
 	"github.com/mathewsjts/medcof-git-flow/internal/ui"
 )
 
+// version é injetada no build (-X main.version=...).
+var version = "dev"
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		// Cobra já imprime o erro; sair com código != 0.
@@ -26,6 +29,7 @@ func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:           "flow",
 		Short:         "Propaga commits de um PR para as branches de ambiente via cherry-pick",
+		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: false,
 	}
