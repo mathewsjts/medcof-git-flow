@@ -1,5 +1,5 @@
-// Package flow contém os casos de uso do CLI (setup, dev, hom, drop, status,
-// resolve/continue/abort, rebuild), orquestrando os adaptadores git e gh.
+// Package flow contém os casos de uso do CLI (setup, dev, hom, status),
+// orquestrando os adaptadores git e gh.
 package flow
 
 import (
@@ -12,10 +12,10 @@ import (
 	"github.com/mathewsjts/medcof-git-flow/internal/ui"
 )
 
-// Versão mínima do git exigida (git merge-tree --write-tree).
+// Versão mínima do git exigida (git rev-parse --path-format).
 const (
 	MinGitMajor = 2
-	MinGitMinor = 38
+	MinGitMinor = 31
 )
 
 // App agrupa as dependências de um comando já resolvido para um repo gerenciado.
@@ -41,7 +41,7 @@ func CheckPrereqs(g *git.Git, gh github.Client) error {
 		return fmt.Errorf("não foi possível verificar a versão do git: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("git %d.%d ou superior é necessário (por causa de `git merge-tree --write-tree`)", MinGitMajor, MinGitMinor)
+		return fmt.Errorf("git %d.%d ou superior é necessário (por causa de `git rev-parse --path-format`)", MinGitMajor, MinGitMinor)
 	}
 	if err := gh.AuthStatus(); err != nil {
 		return err

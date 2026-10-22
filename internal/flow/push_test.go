@@ -14,14 +14,13 @@ func TestPushWithRetryRebasesOnConcurrency(t *testing.T) {
 	r := testutil.NewRepo(t)
 	r.Fetch()
 
-	// Worktree baseado em origin/dev (B0) com um commit nosso (toca X).
+	// Worktree destacado em origin/dev com um commit nosso.
 	common, err := r.G.CommonDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	wtPath := filepath.Join(common, "flow", "apply-dev-1")
-	workBranch := "flow-apply-dev-1"
-	if err := r.G.WorktreeAdd(wtPath, workBranch, "origin/dev"); err != nil {
+	wtPath := filepath.Join(common, "flow", "apply-dev")
+	if err := r.G.WorktreeAddDetached(wtPath, "origin/dev"); err != nil {
 		t.Fatalf("worktree add: %v", err)
 	}
 	defer r.G.WorktreeRemove(wtPath)
@@ -40,13 +39,8 @@ func TestPushWithRetryRebasesOnConcurrency(t *testing.T) {
 	r.Push("dev")
 	r.Checkout("main", false)
 
-	env := Env{Logical: "dev", Branch: "dev"}
-	conf, err := pushWithRetry(wt, workBranch, "dev", env, 1)
-	if err != nil {
+	if err := pushWithRetry(wt, "dev"); err != nil {
 		t.Fatalf("pushWithRetry: %v", err)
-	}
-	if conf != nil {
-		t.Fatalf("esperava sucesso, veio conflito: %+v", conf)
 	}
 
 	// origin/dev deve conter X (nosso, rebaseado) e Y (concorrente).

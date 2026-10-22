@@ -21,10 +21,6 @@ type Repo struct {
 	Environments map[string]string `yaml:"environments"`
 	// Production é a branch de produção (deploy via merge do PR, fora do CLI).
 	Production string `yaml:"production"`
-	// Shared indica repo compartilhado com outros times; desabilita `flow rebuild`.
-	Shared bool `yaml:"shared"`
-	// Verify são comandos argv executados em sequência, sem shell, dentro do worktree.
-	Verify [][]string `yaml:"verify"`
 }
 
 // Branch devolve a branch real de um ambiente lógico e se ele existe.

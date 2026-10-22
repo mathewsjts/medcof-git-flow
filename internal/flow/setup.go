@@ -6,7 +6,7 @@ import (
 	"github.com/mathewsjts/medcof-git-flow/internal/ui"
 )
 
-// Setup checa pré-requisitos (git, gh) e ativa rerere.enabled no repo local.
+// Setup checa pré-requisitos (git, gh).
 // Não exige que o repo esteja na lista gerenciada: é uma checagem de ambiente.
 func Setup(g *git.Git, gh github.Client, p *ui.Printer) error {
 	ma, mi, err := g.Version()
@@ -25,12 +25,6 @@ func Setup(g *git.Git, gh github.Client, p *ui.Printer) error {
 		return err
 	}
 	p.OK("gh autenticado")
-
-	if err := g.SetConfig("rerere.enabled", "true"); err != nil {
-		p.Fail("não foi possível ativar rerere.enabled: %v", err)
-		return err
-	}
-	p.OK("rerere.enabled ativado no repositório local")
 
 	p.Info("Tudo pronto. Use `flow dev` na sua branch de feature.")
 	return nil

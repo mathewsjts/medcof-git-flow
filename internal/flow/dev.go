@@ -1,59 +1,68 @@
 package flow
 
-import (
-	"fmt"
+import "fmt"
 
-	"github.com/mathewsjts/medcof-git-flow/internal/github"
-)
-
-// Dev aplica os commits faltantes do PR da branch atual no ambiente dev.
-func (a *App) Dev() error {
-	pr, err := a.GH.CurrentPR()
-	if err != nil {
-		return fmt.Errorf("não foi possível descobrir o PR da branch atual: %w", err)
-	}
-	if err := a.requireBaseProduction(pr); err != nil {
-		return err
-	}
+// Dev aplica em dev os commits do alvo (PR, branch ou branch atual) que ainda
+// não estão lá.
+func (a *App) Dev(arg string) error {
 	env, err := a.Env("dev")
 	if err != nil {
 		return err
 	}
-	return a.applyAndReport(env, pr)
-}
-
-// requireBaseProduction garante que o PR tem base na branch de produção e está aberto.
-func (a *App) requireBaseProduction(pr github.PR) error {
-	if pr.State == "MERGED" || pr.Merged {
-		return fmt.Errorf("PR #%d já foi mergeado", pr.Number)
+	if err := a.Git.Fetch(); err != nil {
+		return fmt.Errorf("falha no fetch: %w", err)
 	}
-	if pr.State == "CLOSED" {
-		return fmt.Errorf("PR #%d está fechado", pr.Number)
-	}
-	if pr.BaseRefName != a.Repo.Production {
-		return fmt.Errorf("PR #%d tem base %q; o flow exige base %q", pr.Number, pr.BaseRefName, a.Repo.Production)
-	}
-	return nil
-}
-
-// applyAndReport executa applyToEnv e imprime o resultado, delegando conflito ao diagnóstico.
-func (a *App) applyAndReport(env Env, pr github.PR) error {
-	a.UI.Step("Aplicando PR #%d em %s...", pr.Number, env)
-	featureRef := "origin/" + pr.HeadRefName
-	out, err := a.applyToEnv(env, pr.Number, featureRef)
+	t, err := a.resolveTarget(arg)
 	if err != nil {
 		return err
 	}
-	if out.Conflict != nil {
-		return a.reportConflict(out.Conflict)
+	return a.propagate(env, t)
+}
+
+// propagate envia uma resolução de conflito pendente, se houver, e aplica no
+// ambiente os commits do alvo que faltam. Num conflito, abre-o no working tree.
+func (a *App) propagate(env Env, t Target) error {
+	if a.Git.CherryPickInProgress() {
+		return fmt.Errorf("há um cherry-pick em andamento neste repositório: termine com `git cherry-pick --continue` (ou desista com `--abort`) e rode de novo")
 	}
-	if len(out.Applied) == 0 {
-		a.UI.OK("%s já está atualizado com o PR #%d (nada a aplicar)", env, pr.Number)
+	a.UI.Step("Aplicando %s em %s...", t, env)
+	commits, err := a.featureCommits(t.Ref())
+	if err != nil {
+		return err
+	}
+
+	sent, err := a.pushResolution(env, commits)
+	if err != nil {
+		return err
+	}
+	if sent > 0 {
+		a.UI.OK("%d commit(s) da sua resolução enviados para %s", sent, env)
+		if cur, _ := a.Git.CurrentBranch(); cur == env.Branch {
+			a.UI.Info("  Você continua em %s; `git switch %s` para voltar.", env.Branch, t.Branch)
+		}
+	}
+
+	pending, applied, err := a.missing(commits, t.Ref(), env.Branch)
+	if err != nil {
+		return err
+	}
+	if len(pending) == 0 {
+		if sent == 0 {
+			a.UI.OK("%s já está atualizado com %s (nada a aplicar)", env, t)
+		}
 		return nil
 	}
-	a.UI.OK("%d commit(s) aplicado(s) em %s (PR #%d)", len(out.Applied), env, pr.Number)
-	if len(out.Skipped) > 0 {
-		a.UI.Info("  %d commit(s) já estavam aplicados", len(out.Skipped))
+
+	failed, err := a.applyInWorktree(env, pending)
+	if err != nil {
+		return err
+	}
+	if failed != nil {
+		return a.openConflict(env, t, pending, *failed)
+	}
+	a.UI.OK("%d commit(s) aplicado(s) em %s (%s)", len(pending), env, t)
+	if len(applied) > 0 {
+		a.UI.Info("  %d commit(s) já estavam aplicados", len(applied))
 	}
 	return nil
 }

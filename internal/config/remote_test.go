@@ -52,12 +52,6 @@ func TestLoadEmbedded(t *testing.T) {
 	if b, _ := r.Branch("dev"); b != "dev" {
 		t.Errorf("dev branch = %q, queria dev", b)
 	}
-	if !r.Shared {
-		t.Error("apollo deveria ser shared")
-	}
-	if len(r.Verify) == 0 {
-		t.Error("apollo deveria ter comandos verify")
-	}
 	// aulas-ui: dev lógico mapeia para develop.
 	au, ok := c.Lookup("MedCof-Tech/app-aulas-ui")
 	if !ok {

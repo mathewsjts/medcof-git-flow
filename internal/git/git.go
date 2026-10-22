@@ -1,6 +1,6 @@
 // Package git é um adaptador fino sobre o executável `git`, invocado via
 // os/exec sem shell. Todas as operações recebem o diretório de trabalho
-// explicitamente; o CLI nunca altera o working tree do usuário.
+// explicitamente.
 package git
 
 import (
@@ -121,11 +121,6 @@ func (g *Git) AtLeast(major, minor int) (bool, error) {
 		return ma > major, nil
 	}
 	return mi >= minor, nil
-}
-
-// SetConfig define uma chave de configuração no repo local.
-func (g *Git) SetConfig(key, value string) error {
-	return g.RunOK("config", key, value)
 }
 
 // RemoteURL devolve a URL do remote origin.

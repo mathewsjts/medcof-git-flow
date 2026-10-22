@@ -31,3 +31,8 @@ func (p *Printer) OK(format string, a ...any) {
 func (p *Printer) Fail(format string, a ...any) {
 	fmt.Fprintf(p.W, "✗ "+format+"\n", a...)
 }
+
+// Warn imprime um aviso.
+func (p *Printer) Warn(format string, a ...any) {
+	fmt.Fprintf(p.W, "! "+format+"\n", a...)
+}

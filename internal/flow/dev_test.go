@@ -7,54 +7,98 @@ import (
 	"github.com/mathewsjts/medcof-git-flow/internal/testutil"
 )
 
-func TestDevInitialApply(t *testing.T) {
+func TestDevByPRNumber(t *testing.T) {
 	r := testutil.NewRepo(t)
 	gh := testutil.NewGHMock()
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"}, [2]string{"src/b.txt", "b1\n"})
+	openPR(gh, 123, "feature/x")
+	app, _ := testApp(t, r, gh)
 
-	r.Checkout("feature/x", true)
-	r.CommitFile("src/a.txt", "a1\n", "feat: a")
-	r.CommitFile("src/b.txt", "b1\n", "feat: b")
-	r.Push("feature/x")
-	r.Checkout("main", false)
-
-	openPR(gh, 123, "feature/x", true)
-	app, _ := testApp(t, r, gh, false, nil)
-
-	if err := app.Dev(); err != nil {
+	if err := app.Dev("#123"); err != nil {
 		t.Fatalf("Dev: %v", err)
 	}
-
 	envHasFile(t, r, "dev", "src/a.txt", "a1")
 	envHasFile(t, r, "dev", "src/b.txt", "b1")
-
-	// Dois commits aplicados, cada um com trailer Flow-PR #123 e linha de procedência.
-	metas := metasOnOrigin(t, r, "dev")
-	applied := 0
-	for _, m := range metas {
-		if m.FlowPR == 123 {
-			applied++
-			if m.CherryFrom == "" {
-				t.Errorf("commit %s sem linha 'cherry picked from'", m.SHA)
-			}
-		}
+	if n := pickedCount(t, r, "dev"); n != 2 {
+		t.Fatalf("esperava 2 commits com 'cherry picked from' em dev, veio %d", n)
 	}
-	if applied != 2 {
-		t.Fatalf("esperava 2 commits com Flow-PR #123, veio %d", applied)
+	if b := currentBranch(t, r); b != "main" {
+		t.Fatalf("caminho feliz não deve mexer no working tree; branch atual = %s", b)
+	}
+}
+
+func TestDevByBranchWithoutPR(t *testing.T) {
+	r := testutil.NewRepo(t)
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	app, out := testApp(t, r, testutil.NewGHMock())
+
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	envHasFile(t, r, "dev", "src/a.txt", "a1")
+	if strings.Contains(out.String(), "PR #") {
+		t.Fatalf("branch sem PR não deveria citar PR:\n%s", out)
+	}
+}
+
+func TestDevDefaultsToCurrentBranch(t *testing.T) {
+	r := testutil.NewRepo(t)
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	r.Checkout("feature/x", false)
+	app, _ := testApp(t, r, testutil.NewGHMock())
+
+	if err := app.Dev(""); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	envHasFile(t, r, "dev", "src/a.txt", "a1")
+}
+
+func TestDevRejectsEnvBranchAsTarget(t *testing.T) {
+	r := testutil.NewRepo(t)
+	r.Checkout("dev", false)
+	app, _ := testApp(t, r, testutil.NewGHMock())
+
+	err := app.Dev("")
+	if err == nil || !strings.Contains(err.Error(), "não é uma branch de feature") {
+		t.Fatalf("esperava recusa de dev como alvo, veio: %v", err)
+	}
+}
+
+func TestDevRequiresBranchOnOrigin(t *testing.T) {
+	r := testutil.NewRepo(t)
+	r.Checkout("feature/local", true)
+	r.CommitFile("src/a.txt", "a1\n", "feat: a")
+	app, _ := testApp(t, r, testutil.NewGHMock())
+
+	err := app.Dev("")
+	if err == nil || !strings.Contains(err.Error(), "git push -u origin feature/local") {
+		t.Fatalf("esperava pedido de push, veio: %v", err)
+	}
+}
+
+func TestDevWarnsUnpushedLocalCommits(t *testing.T) {
+	r := testutil.NewRepo(t)
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	r.Checkout("feature/x", false)
+	r.CommitFile("src/b.txt", "b1\n", "feat: b (local)")
+	app, out := testApp(t, r, testutil.NewGHMock())
+
+	if err := app.Dev(""); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	if !strings.Contains(out.String(), "não estão em origin") {
+		t.Fatalf("esperava aviso de commits locais não enviados:\n%s", out)
+	}
+	if _, ok := r.FileOnOrigin("dev", "src/b.txt"); ok {
+		t.Fatal("commit local não enviado não deveria ir para dev")
 	}
 }
 
 func TestDevReapplyOnlyNew(t *testing.T) {
 	r := testutil.NewRepo(t)
-	gh := testutil.NewGHMock()
-
-	r.Checkout("feature/x", true)
-	r.CommitFile("src/a.txt", "a1\n", "feat: a")
-	r.CommitFile("src/b.txt", "b1\n", "feat: b")
-	r.Push("feature/x")
-	r.Checkout("main", false)
-	openPR(gh, 7, "feature/x", true)
-	app, _ := testApp(t, r, gh, false, nil)
-	if err := app.Dev(); err != nil {
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"}, [2]string{"src/b.txt", "b1\n"})
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
 		t.Fatalf("primeira Dev: %v", err)
 	}
 
@@ -64,34 +108,20 @@ func TestDevReapplyOnlyNew(t *testing.T) {
 	r.Push("feature/x")
 	r.Checkout("main", false)
 
-	if err := app.Dev(); err != nil {
+	if err := app.Dev("feature/x"); err != nil {
 		t.Fatalf("segunda Dev: %v", err)
 	}
 	envHasFile(t, r, "dev", "src/c.txt", "c1")
-
-	// dev deve ter 3 commits com Flow-PR #7 (a, b, c), nenhum duplicado.
-	count := 0
-	for _, m := range metasOnOrigin(t, r, "dev") {
-		if m.FlowPR == 7 {
-			count++
-		}
-	}
-	if count != 3 {
-		t.Fatalf("esperava 3 commits Flow-PR #7 em dev, veio %d", count)
+	if n := pickedCount(t, r, "dev"); n != 3 {
+		t.Fatalf("esperava 3 commits aplicados em dev (a, b, c), veio %d", n)
 	}
 }
 
 func TestDevSkipsAlreadyAppliedAfterRebase(t *testing.T) {
 	r := testutil.NewRepo(t)
-	gh := testutil.NewGHMock()
-
-	r.Checkout("feature/x", true)
-	r.CommitFile("src/a.txt", "a1\n", "feat: a")
-	r.Push("feature/x")
-	r.Checkout("main", false)
-	openPR(gh, 9, "feature/x", true)
-	app, _ := testApp(t, r, gh, false, nil)
-	if err := app.Dev(); err != nil {
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
 		t.Fatalf("Dev inicial: %v", err)
 	}
 
@@ -106,31 +136,59 @@ func TestDevSkipsAlreadyAppliedAfterRebase(t *testing.T) {
 	r.RunGit("push", "-f", "origin", "feature/x")
 	r.Checkout("main", false)
 
-	if err := app.Dev(); err != nil {
+	if err := app.Dev("feature/x"); err != nil {
 		t.Fatalf("Dev pós-rebase: %v", err)
 	}
 	envHasFile(t, r, "dev", "src/d.txt", "d1")
+	if n := pickedCount(t, r, "dev"); n != 2 {
+		t.Fatalf("esperava 2 commits aplicados em dev (a+d), veio %d", n)
+	}
+}
 
-	// 'a' não deve ser reaplicado: dev tem exatamente 2 commits Flow-PR #9 (a + d).
-	count := 0
-	for _, m := range metasOnOrigin(t, r, "dev") {
-		if m.FlowPR == 9 {
-			count++
-		}
+func TestDevSkipsCommitsMergedIntoEnv(t *testing.T) {
+	r := testutil.NewRepo(t)
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+
+	// Fluxo antigo: a feature foi mergeada em dev por PR.
+	r.Checkout("dev", false)
+	r.RunGit("merge", "--no-ff", "-m", "Merge feature/x into dev", "feature/x")
+	r.Push("dev")
+	r.Checkout("main", false)
+
+	app, out := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
 	}
-	if count != 2 {
-		t.Fatalf("esperava 2 commits Flow-PR #9 em dev (a+d), veio %d", count)
+	if !strings.Contains(out.String(), "nada a aplicar") {
+		t.Fatalf("esperava nada a aplicar:\n%s", out)
 	}
+}
+
+func TestDevCarriesDependencyCommits(t *testing.T) {
+	r := testutil.NewRepo(t)
+	// feature/base parte de main; feature/x parte de feature/base.
+	r.Checkout("feature/base", true)
+	r.CommitFile("src/base.txt", "base\n", "feat: base")
+	r.Push("feature/base")
+	r.Checkout("feature/x", true)
+	r.CommitFile("src/x.txt", "x\n", "feat: x")
+	r.Push("feature/x")
+	r.Checkout("main", false)
+
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	envHasFile(t, r, "dev", "src/base.txt", "base")
+	envHasFile(t, r, "dev", "src/x.txt", "x")
 }
 
 func TestDevRejectsMergeCommits(t *testing.T) {
 	r := testutil.NewRepo(t)
-	gh := testutil.NewGHMock()
 
 	// feature com um merge commit no intervalo.
 	r.Checkout("feature/x", true)
 	r.CommitFile("src/a.txt", "a1\n", "feat: a")
-	// cria uma branch lateral e faz merge para introduzir merge commit
 	r.Checkout("side", true)
 	r.CommitFile("src/s.txt", "s1\n", "feat: side")
 	r.Checkout("feature/x", false)
@@ -138,9 +196,8 @@ func TestDevRejectsMergeCommits(t *testing.T) {
 	r.Push("feature/x")
 	r.Checkout("main", false)
 
-	openPR(gh, 11, "feature/x", true)
-	app, _ := testApp(t, r, gh, false, nil)
-	err := app.Dev()
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	err := app.Dev("feature/x")
 	if err == nil || !strings.Contains(err.Error(), "merge commits") {
 		t.Fatalf("esperava recusa por merge commits, veio: %v", err)
 	}

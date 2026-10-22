@@ -1,7 +1,8 @@
 package git
 
 import (
-	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -14,6 +15,11 @@ func (g *Git) Fetch(refs ...string) error {
 // RevParse resolve uma revisão para o SHA completo.
 func (g *Git) RevParse(rev string) (string, error) {
 	return g.Run("rev-parse", "--verify", rev)
+}
+
+// BranchExists informa se existe a branch local.
+func (g *Git) BranchExists(branch string) bool {
+	return g.RunOK("rev-parse", "--verify", "-q", "refs/heads/"+branch) == nil
 }
 
 // MergeBase devolve o merge-base entre duas revisões.
@@ -37,15 +43,6 @@ func (g *Git) RevListRange(rng string, reverse, noMerges bool) ([]string, error)
 		return nil, err
 	}
 	return Lines(out), nil
-}
-
-// HasMerges informa se há merge commits no intervalo.
-func (g *Git) HasMerges(rng string) (bool, error) {
-	out, err := g.Run("rev-list", "--merges", rng)
-	if err != nil {
-		return false, err
-	}
-	return len(Lines(out)) > 0, nil
 }
 
 // CherryEquivalent devolve o conjunto de SHAs de head (limitado por limit) cujo
@@ -78,6 +75,14 @@ func (c LogCommit) Subject() string {
 		return c.Body[:i]
 	}
 	return c.Body
+}
+
+// Short devolve o SHA abreviado para mensagens.
+func (c LogCommit) Short() string {
+	if len(c.SHA) > 7 {
+		return c.SHA[:7]
+	}
+	return c.SHA
 }
 
 const (
@@ -120,22 +125,6 @@ func (g *Git) Log(rng string, reverse bool) ([]LogCommit, error) {
 	return commits, nil
 }
 
-// MergeTreeConflicts informa se o merge de branch sobre base conflita, sem tocar
-// no working tree (git merge-tree --write-tree). Requer git >= 2.38.
-func (g *Git) MergeTreeConflicts(base, branch string) (bool, error) {
-	_, err := g.Run("merge-tree", "--write-tree", "--no-messages", base, branch)
-	if err == nil {
-		return false, nil
-	}
-	// merge-tree sai com código 1 em caso de conflito (não é erro de execução).
-	if ce, ok := err.(*CmdError); ok {
-		if ee, ok := ce.Err.(interface{ ExitCode() int }); ok && ee.ExitCode() == 1 {
-			return true, nil
-		}
-	}
-	return false, err
-}
-
 // UnmergedFiles devolve os arquivos em conflito no índice do worktree.
 func (g *Git) UnmergedFiles() ([]string, error) {
 	out, err := g.Run("diff", "--name-only", "--diff-filter=U")
@@ -145,9 +134,12 @@ func (g *Git) UnmergedFiles() ([]string, error) {
 	return Lines(out), nil
 }
 
-// CherryPick aplica um commit preservando a procedência (-x).
-func (g *Git) CherryPick(sha string) error {
-	return g.RunOK("cherry-pick", "-x", sha)
+// CherryPick aplica os commits em sequência preservando a procedência (-x).
+// Commits que ficam vazios são mantidos, para que a procedência fique registrada.
+// Num conflito, para com o cherry-pick em andamento (`--continue` segue a sequência).
+func (g *Git) CherryPick(shas ...string) error {
+	args := append([]string{"cherry-pick", "-x", "--keep-redundant-commits"}, shas...)
+	return g.RunOK(args...)
 }
 
 // CherryPickAbort aborta um cherry-pick em andamento (ignora erro se não houver).
@@ -155,46 +147,37 @@ func (g *Git) CherryPickAbort() {
 	_ = g.RunOK("cherry-pick", "--abort")
 }
 
-// AmendTrailers adiciona trailers ao commit HEAD (via commit --amend --trailer).
-// Cada trailer vem como "Chave: valor".
-func (g *Git) AmendTrailers(trailers ...string) error {
-	args := []string{"commit", "--amend", "--no-edit"}
-	for _, t := range trailers {
-		args = append(args, "--trailer", t)
+// CherryPickInProgress informa se há um cherry-pick parado (conflito ou
+// sequência interrompida) neste working tree.
+func (g *Git) CherryPickInProgress() bool {
+	if g.RunOK("rev-parse", "-q", "--verify", "CHERRY_PICK_HEAD") == nil {
+		return true
 	}
-	return g.RunOK(args...)
-}
-
-// CommitAllowEmptyWithTrailers cria um commit (índice atual) com mensagem e trailers.
-func (g *Git) Commit(message string, trailers ...string) error {
-	args := []string{"commit", "-m", message}
-	for _, t := range trailers {
-		args = append(args, "--trailer", t)
+	seq, err := g.Run("rev-parse", "--git-path", "sequencer")
+	if err != nil {
+		return false
 	}
-	return g.RunOK(args...)
-}
-
-// Revert reverte um commit sem abrir editor; pode gerar conflito (retorna erro).
-func (g *Git) Revert(sha string) error {
-	return g.RunOK("revert", "--no-edit", sha)
-}
-
-// RevertContinueAbort utilitários para revert em conflito.
-func (g *Git) RevertAbort() { _ = g.RunOK("revert", "--abort") }
-
-// ResetHard move a branch corrente para ref, descartando mudanças.
-func (g *Git) ResetHard(ref string) error {
-	return g.RunOK("reset", "--hard", ref)
-}
-
-// Push envia refspec para origin. forceWithLease usa --force-with-lease.
-func (g *Git) Push(refspec string, forceWithLease bool) error {
-	args := []string{"push"}
-	if forceWithLease {
-		args = append(args, "--force-with-lease")
+	if !filepath.IsAbs(seq) {
+		seq = filepath.Join(g.dir, seq)
 	}
-	args = append(args, "origin", refspec)
-	return g.RunOK(args...)
+	_, err = os.Stat(seq)
+	return err == nil
+}
+
+// Commit cria um commit com o índice atual.
+func (g *Git) Commit(message string) error {
+	return g.RunOK("commit", "-m", message)
+}
+
+// SwitchReset faz checkout de branch no working tree, criando-a ou movendo-a
+// para startPoint.
+func (g *Git) SwitchReset(branch, startPoint string) error {
+	return g.RunOK("switch", "-C", branch, startPoint)
+}
+
+// Push envia refspec para origin.
+func (g *Git) Push(refspec string) error {
+	return g.RunOK("push", "origin", refspec)
 }
 
 // Rebase rebaseia a branch corrente sobre upstream (pode conflitar → erro).
@@ -205,38 +188,11 @@ func (g *Git) Rebase(upstream string) error {
 // RebaseAbort aborta um rebase em andamento.
 func (g *Git) RebaseAbort() { _ = g.RunOK("rebase", "--abort") }
 
-// ShowDiff devolve o diff de um ref (ex.: para dar contexto no resolve).
-func (g *Git) ShowDiff(ref string) (string, error) {
-	return g.Run("show", "--no-color", ref)
-}
-
-// DiffRange devolve o diff de um intervalo de commits.
-func (g *Git) DiffRange(rng string) (string, error) {
-	return g.Run("diff", "--no-color", rng)
-}
-
-// CommitTouchesAny informa se um commit altera algum dos arquivos dados.
-func (g *Git) CommitTouchesAny(sha string, files map[string]bool) (bool, error) {
-	out, err := g.Run("show", "--name-only", "--format=", sha)
+// TrackedChanges informa se há mudanças em arquivos rastreados (untracked não contam).
+func (g *Git) TrackedChanges() (bool, error) {
+	out, err := g.Run("status", "--porcelain", "--untracked-files=no")
 	if err != nil {
 		return false, err
 	}
-	for _, f := range Lines(out) {
-		if files[f] {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// EnsureClean falha se o worktree tiver mudanças pendentes (proteção extra).
-func (g *Git) EnsureClean() error {
-	out, err := g.Run("status", "--porcelain")
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(out) != "" {
-		return fmt.Errorf("working tree não está limpo")
-	}
-	return nil
+	return strings.TrimSpace(out) != "", nil
 }

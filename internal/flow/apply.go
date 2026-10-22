@@ -3,8 +3,6 @@ package flow
 import (
 	"fmt"
 	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/mathewsjts/medcof-git-flow/internal/git"
 )
@@ -32,193 +30,143 @@ func (a *App) Env(logical string) (Env, error) {
 	return Env{Logical: logical, Branch: b}, nil
 }
 
-// Conflict descreve uma parada por conflito que exige diagnóstico/resolução.
-type Conflict struct {
-	Env       Env
-	PR        int
-	Phase     string   // "cherry-pick" ou "rebase"
-	FailedSHA string   // commit da feature que falhou (vazio em rebase)
-	Files     []string // arquivos em conflito
-	Pending   []string // SHAs da feature ainda não aplicados, em ordem
-}
-
-// ApplyOutcome é o resultado de aplicar commits em um ambiente.
-type ApplyOutcome struct {
-	Applied  []string
-	Skipped  []string
-	Conflict *Conflict
-}
-
-// envMetas devolve a metainformação dos commits do ambiente desde o merge-base
-// com a produção (ou seja, os commits aplicados sobre produção).
-func (a *App) envMetas(envBranch string) ([]CommitMeta, error) {
-	prod := "origin/" + a.Repo.Production
-	mb, err := a.Git.MergeBase(prod, "origin/"+envBranch)
+// featureCommits devolve os commits de produção..ref, do mais antigo ao mais
+// novo, recusando merge commits.
+func (a *App) featureCommits(ref string) ([]git.LogCommit, error) {
+	commits, err := a.Git.Log("origin/"+a.Repo.Production+".."+ref, true)
 	if err != nil {
 		return nil, err
 	}
-	commits, err := a.Git.Log(mb+"..origin/"+envBranch, false)
-	if err != nil {
-		return nil, err
-	}
-	metas := make([]CommitMeta, 0, len(commits))
 	for _, c := range commits {
-		metas = append(metas, parseMeta(c))
+		if len(c.Parents) > 1 {
+			return nil, fmt.Errorf("a branch tem merge commits em relação a %s; faça `git rebase origin/%s` para linearizar", a.Repo.Production, a.Repo.Production)
+		}
 	}
-	return metas, nil
+	return commits, nil
 }
 
-// featureCommits devolve (merge-base, SHAs em ordem) do intervalo produção..feature,
-// recusando se houver merge commits.
-func (a *App) featureCommits(featureRef string) (string, []string, error) {
-	prod := "origin/" + a.Repo.Production
-	mb, err := a.Git.MergeBase(prod, featureRef)
+// missing separa os commits da feature entre os que faltam no ambiente e os que
+// já estão lá: por ancestralidade (mergeados no fluxo antigo), por patch-id
+// (git cherry) ou pela linha "(cherry picked from commit X)" de uma aplicação
+// anterior, inclusive as que passaram por resolução de conflito.
+func (a *App) missing(commits []git.LogCommit, ref, envBranch string) (pending, applied []git.LogCommit, err error) {
+	envRef := "origin/" + envBranch
+	notInEnv, err := a.Git.RevListRange(envRef+".."+ref, false, false)
 	if err != nil {
-		return "", nil, fmt.Errorf("não foi possível achar o merge-base com %s: %w", a.Repo.Production, err)
+		return nil, nil, err
 	}
-	rng := mb + ".." + featureRef
-	hasMerges, err := a.Git.HasMerges(rng)
+	outside := map[string]bool{}
+	for _, sha := range notInEnv {
+		outside[sha] = true
+	}
+	patchApplied, err := a.Git.CherryEquivalent(envRef, ref, "origin/"+a.Repo.Production)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
-	if hasMerges {
-		return "", nil, fmt.Errorf("a branch tem merge commits no intervalo %s..feature; faça `git rebase %s` para linearizar", a.Repo.Production, a.Repo.Production)
-	}
-	shas, err := a.Git.RevListRange(rng, true, true)
+	picked, err := a.pickedInto(envBranch)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
-	return mb, shas, nil
+	for _, c := range commits {
+		if !outside[c.SHA] || patchApplied[c.SHA] || picked(c.SHA) {
+			applied = append(applied, c)
+		} else {
+			pending = append(pending, c)
+		}
+	}
+	return pending, applied, nil
 }
 
-// missing calcula quais commits da feature ainda não estão no ambiente.
-func (a *App) missing(featureRef, envBranch string) (pending []string, skipped []string, err error) {
-	mb, shas, err := a.featureCommits(featureRef)
+// pickedInto devolve um teste "este SHA já foi aplicado por cherry-pick -x no
+// ambiente", olhando os commits do ambiente desde o merge-base com produção.
+func (a *App) pickedInto(envBranch string) (func(sha string) bool, error) {
+	envRef := "origin/" + envBranch
+	mb, err := a.Git.MergeBase("origin/"+a.Repo.Production, envRef)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	// Equivalência por patch-id (git cherry).
-	patchApplied, err := a.Git.CherryEquivalent("origin/"+envBranch, featureRef, mb)
+	commits, err := a.Git.Log(mb+".."+envRef, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	// SHAs de origem registrados por "(cherry picked from commit X)" no ambiente.
-	metas, err := a.envMetas(envBranch)
-	if err != nil {
-		return nil, nil, err
+	var from []string
+	for _, c := range commits {
+		if f := cherryFrom(c); f != "" {
+			from = append(from, f)
+		}
 	}
-	for _, sha := range shas {
-		applied := patchApplied[sha]
-		if !applied {
-			for _, m := range metas {
-				if m.CherryFrom != "" && matchesSHA(m.CherryFrom, sha) {
-					applied = true
-					break
-				}
+	return func(sha string) bool {
+		for _, f := range from {
+			if matchesSHA(f, sha) {
+				return true
 			}
 		}
-		if applied {
-			skipped = append(skipped, sha)
-		} else {
-			pending = append(pending, sha)
-		}
-	}
-	return pending, skipped, nil
+		return false
+	}, nil
 }
 
-// worktreePath devolve o caminho do worktree efêmero para aplicar em um ambiente.
-func (a *App) worktreePath(prefix, logical string, pr int) (string, error) {
+// applyInWorktree aplica os commits num worktree temporário destacado em
+// origin/<env> e faz push, sem tocar no working tree do usuário. Num conflito,
+// aborta sem enviar nada e devolve o commit que conflitou.
+func (a *App) applyInWorktree(env Env, pending []git.LogCommit) (*git.LogCommit, error) {
 	common, err := a.Git.CommonDir()
 	if err != nil {
-		return "", err
-	}
-	return filepath.Join(common, "flow", fmt.Sprintf("%s-%s-%d", prefix, logical, pr)), nil
-}
-
-// applyToEnv aplica, em um worktree efêmero, os commits pendentes da feature no
-// ambiente e faz push com retry. Devolve ApplyOutcome; Conflict != nil quando
-// um cherry-pick (ou o rebase de push) conflita.
-func (a *App) applyToEnv(env Env, pr int, featureRef string) (*ApplyOutcome, error) {
-	if err := a.Git.Fetch(); err != nil {
-		return nil, fmt.Errorf("falha no fetch: %w", err)
-	}
-
-	pending, skipped, err := a.missing(featureRef, env.Branch)
-	if err != nil {
 		return nil, err
 	}
-	out := &ApplyOutcome{Skipped: skipped}
-	if len(pending) == 0 {
-		return out, nil
-	}
-
-	wtPath, err := a.worktreePath("apply", env.Logical, pr)
-	if err != nil {
-		return nil, err
-	}
-	workBranch := fmt.Sprintf("flow-apply-%s-%d", env.Logical, pr)
-	a.Git.WorktreeRemove(wtPath)
-	if err := a.Git.WorktreeAdd(wtPath, workBranch, "origin/"+env.Branch); err != nil {
+	path := filepath.Join(common, "flow", "apply-"+env.Logical)
+	a.Git.WorktreeRemove(path)
+	if err := a.Git.WorktreeAddDetached(path, "origin/"+env.Branch); err != nil {
 		return nil, fmt.Errorf("não foi possível criar worktree: %w", err)
 	}
-	defer a.Git.WorktreeRemove(wtPath)
-	wt := a.Git.At(wtPath)
+	defer a.Git.WorktreeRemove(path)
+	wt := a.Git.At(path)
 
-	for i, sha := range pending {
-		if err := wt.CherryPick(sha); err != nil {
-			files, _ := wt.UnmergedFiles()
+	for i := range pending {
+		if err := wt.CherryPick(pending[i].SHA); err != nil {
 			wt.CherryPickAbort()
-			out.Conflict = &Conflict{
-				Env: env, PR: pr, Phase: "cherry-pick",
-				FailedSHA: sha, Files: files, Pending: pending[i:],
-			}
-			return out, nil
+			return &pending[i], nil
 		}
-		if err := wt.AmendTrailers(trailerFlowPR(pr)); err != nil {
-			return nil, fmt.Errorf("não foi possível gravar trailer Flow-PR: %w", err)
-		}
-		out.Applied = append(out.Applied, sha)
 	}
-
-	if conf, err := pushWithRetry(wt, workBranch, env.Branch, env, pr); err != nil {
-		return nil, err
-	} else if conf != nil {
-		out.Conflict = conf
-	}
-	return out, nil
+	return nil, pushWithRetry(wt, env.Branch)
 }
 
-// pushWithRetry faz push de localBranch -> envBranch com até 3 tentativas,
-// rebaseando sobre origin/<envBranch> em caso de rejeição por concorrência.
-// Conflito no rebase vira um Conflict (fase "rebase") para diagnóstico.
-func pushWithRetry(wt *git.Git, localBranch, envBranch string, env Env, pr int) (*Conflict, error) {
+// pushWithRetry faz push do HEAD do worktree para envBranch com até 3
+// tentativas, rebaseando sobre origin/<envBranch> quando alguém enviou antes.
+func pushWithRetry(wt *git.Git, envBranch string) error {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		if err := wt.Push(localBranch+":"+envBranch, false); err == nil {
-			return nil, nil
-		} else {
-			lastErr = err
+		if lastErr = wt.Push("HEAD:" + envBranch); lastErr == nil {
+			return nil
 		}
 		if err := wt.Fetch(envBranch); err != nil {
-			return nil, fmt.Errorf("falha no fetch durante retry de push: %w", err)
+			return fmt.Errorf("falha no fetch durante retry de push: %w", err)
 		}
 		if err := wt.Rebase("origin/" + envBranch); err != nil {
-			files, _ := wt.UnmergedFiles()
 			wt.RebaseAbort()
-			return &Conflict{Env: env, PR: pr, Phase: "rebase", Files: files}, nil
+			return fmt.Errorf("origin/%s mudou durante a aplicação e conflita com ela; nada foi enviado, rode o comando de novo", envBranch)
 		}
 	}
-	return nil, fmt.Errorf("push para %s rejeitado após 3 tentativas: %w", envBranch, lastErr)
+	return fmt.Errorf("push para %s rejeitado após 3 tentativas: %w", envBranch, lastErr)
 }
 
-func trailerFlowPR(pr int) string { return "Flow-PR: #" + strconv.Itoa(pr) }
-
-func trailerFlowDrop(pr int) string { return "Flow-Drop: #" + strconv.Itoa(pr) }
-
-func trailerFlowResolves(prs []int) string {
-	parts := make([]string, len(prs))
-	for i, p := range prs {
-		parts[i] = "#" + strconv.Itoa(p)
+// pushResolution envia a branch local do ambiente quando ela está à frente de
+// origin só com cherry-picks desta feature: é a resolução de um conflito aberto
+// por uma execução anterior. Devolve quantos commits foram enviados.
+func (a *App) pushResolution(env Env, commits []git.LogCommit) (int, error) {
+	if !a.Git.BranchExists(env.Branch) {
+		return 0, nil
 	}
-	return "Flow-Resolves: " + strings.Join(parts, ", ")
+	ahead, err := a.Git.Log("origin/"+env.Branch+".."+env.Branch, false)
+	if err != nil || len(ahead) == 0 {
+		return 0, err
+	}
+	for _, c := range ahead {
+		if !containsSHA(commits, cherryFrom(c)) {
+			return 0, nil
+		}
+	}
+	if err := a.Git.Push(env.Branch + ":" + env.Branch); err != nil {
+		return 0, fmt.Errorf("não foi possível enviar sua resolução em %s (origin/%s pode ter avançado; em %s rode `git pull --rebase` e o comando de novo): %w", env.Branch, env.Branch, env.Branch, err)
+	}
+	return len(ahead), a.Git.Fetch(env.Branch)
 }

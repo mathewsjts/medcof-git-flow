@@ -45,9 +45,9 @@ func (c *CLI) AuthStatus() error {
 	return nil
 }
 
-const prJSONFields = "number,title,state,baseRefName,headRefName,reviewDecision,author,mergedAt,url,commits"
+const prJSONFields = "number,title,state,baseRefName,headRefName,reviewDecision,url"
 
-// prJSON espelha a saída de `gh pr view --json`.
+// prJSON espelha a saída de `gh pr view/list --json`.
 type prJSON struct {
 	Number         int    `json:"number"`
 	Title          string `json:"title"`
@@ -55,46 +55,19 @@ type prJSON struct {
 	BaseRefName    string `json:"baseRefName"`
 	HeadRefName    string `json:"headRefName"`
 	ReviewDecision string `json:"reviewDecision"`
-	Author         struct {
-		Login string `json:"login"`
-	} `json:"author"`
-	MergedAt string `json:"mergedAt"`
-	URL      string `json:"url"`
-	Commits  []struct {
-		OID             string `json:"oid"`
-		MessageHeadline string `json:"messageHeadline"`
-	} `json:"commits"`
+	URL            string `json:"url"`
 }
 
 func (p prJSON) toPR() PR {
-	pr := PR{
+	return PR{
 		Number:         p.Number,
 		Title:          p.Title,
 		State:          p.State,
 		BaseRefName:    p.BaseRefName,
 		HeadRefName:    p.HeadRefName,
 		ReviewDecision: p.ReviewDecision,
-		Author:         p.Author.Login,
-		Merged:         p.MergedAt != "" && p.MergedAt != "null",
 		URL:            p.URL,
 	}
-	for _, cm := range p.Commits {
-		pr.Commits = append(pr.Commits, Commit{SHA: cm.OID, Headline: cm.MessageHeadline})
-	}
-	return pr
-}
-
-// CurrentPR devolve o PR da branch corrente.
-func (c *CLI) CurrentPR() (PR, error) {
-	out, err := c.run("pr", "view", "--json", prJSONFields)
-	if err != nil {
-		return PR{}, err
-	}
-	var p prJSON
-	if err := json.Unmarshal(out, &p); err != nil {
-		return PR{}, fmt.Errorf("JSON inesperado de `gh pr view`: %w", err)
-	}
-	return p.toPR(), nil
 }
 
 // PR devolve um PR pelo número.
@@ -110,51 +83,18 @@ func (c *CLI) PR(number int) (PR, error) {
 	return p.toPR(), nil
 }
 
-// CommitPRs devolve os PRs associados a um commit via API REST.
-func (c *CLI) CommitPRs(repo, sha string) ([]CommitPR, error) {
-	out, err := c.run("api", fmt.Sprintf("repos/%s/commits/%s/pulls", repo, sha))
+// PRForBranch devolve o PR aberto com head em branch e base em base.
+func (c *CLI) PRForBranch(branch, base string) (PR, bool, error) {
+	out, err := c.run("pr", "list", "--head", branch, "--base", base, "--state", "open", "--limit", "1", "--json", prJSONFields)
 	if err != nil {
-		return nil, err
+		return PR{}, false, err
 	}
-	var raw []struct {
-		Number int    `json:"number"`
-		State  string `json:"state"`
-		Merged bool   `json:"merged"`
-		User   struct {
-			Login string `json:"login"`
-		} `json:"user"`
+	var ps []prJSON
+	if err := json.Unmarshal(out, &ps); err != nil {
+		return PR{}, false, fmt.Errorf("JSON inesperado de `gh pr list --head %s`: %w", branch, err)
 	}
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, fmt.Errorf("JSON inesperado de commits/%s/pulls: %w", sha, err)
+	if len(ps) == 0 {
+		return PR{}, false, nil
 	}
-	prs := make([]CommitPR, 0, len(raw))
-	for _, r := range raw {
-		prs = append(prs, CommitPR{Number: r.Number, State: r.State, Merged: r.Merged, Author: r.User.Login})
-	}
-	return prs, nil
-}
-
-// CommitAuthor devolve o login do autor de um commit (ou o nome, se sem login).
-func (c *CLI) CommitAuthor(repo, sha string) (string, error) {
-	out, err := c.run("api", fmt.Sprintf("repos/%s/commits/%s", repo, sha))
-	if err != nil {
-		return "", err
-	}
-	var raw struct {
-		Author struct {
-			Login string `json:"login"`
-		} `json:"author"`
-		Commit struct {
-			Author struct {
-				Name string `json:"name"`
-			} `json:"author"`
-		} `json:"commit"`
-	}
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return "", fmt.Errorf("JSON inesperado de commits/%s: %w", sha, err)
-	}
-	if raw.Author.Login != "" {
-		return raw.Author.Login, nil
-	}
-	return raw.Commit.Author.Name, nil
+	return ps[0].toPR(), true, nil
 }

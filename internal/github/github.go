@@ -10,37 +10,16 @@ type PR struct {
 	BaseRefName    string
 	HeadRefName    string
 	ReviewDecision string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, ""
-	Author         string // login do autor
-	Merged         bool
 	URL            string
-	// Commits em ordem cronológica (mais antigo -> mais novo).
-	Commits []Commit
-}
-
-// Commit é um commit de um PR (SHA + resumo).
-type Commit struct {
-	SHA      string
-	Headline string
-}
-
-// CommitPR é a referência de um PR associado a um commit (via API REST).
-type CommitPR struct {
-	Number int
-	State  string // open, closed
-	Merged bool
-	Author string
 }
 
 // Client é a interface sobre o `gh` usada pelos casos de uso.
 type Client interface {
 	// AuthStatus falha se o gh não estiver autenticado.
 	AuthStatus() error
-	// CurrentPR devolve o PR da branch corrente (gh pr view).
-	CurrentPR() (PR, error)
 	// PR devolve um PR pelo número.
 	PR(number int) (PR, error)
-	// CommitPRs devolve os PRs associados a um commit (owner/repo, sha).
-	CommitPRs(repo, sha string) ([]CommitPR, error)
-	// CommitAuthor devolve o login (ou nome) do autor de um commit.
-	CommitAuthor(repo, sha string) (string, error)
+	// PRForBranch devolve o PR aberto com head em branch e base em base;
+	// found=false quando não há.
+	PRForBranch(branch, base string) (pr PR, found bool, err error)
 }

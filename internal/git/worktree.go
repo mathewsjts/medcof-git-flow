@@ -2,16 +2,9 @@ package git
 
 import "time"
 
-// WorktreeAdd cria um worktree em path, com uma branch local checada em
-// startPoint. branch é criada/forçada para apontar para startPoint.
-// O worktree fica destacado da branch de ambiente real: trabalhamos numa branch
-// temporária e só publicamos via push de refspec.
-func (g *Git) WorktreeAdd(path, branch, startPoint string) error {
-	// -B recria a branch se já existir; worktree isolado do checkout do usuário.
-	return g.RunOK("worktree", "add", "-f", "-B", branch, path, startPoint)
-}
-
 // WorktreeAddDetached cria um worktree em HEAD destacado no commit dado.
+// O flow trabalha destacado e só publica via push de refspec, sem deixar
+// branches temporárias no repo do usuário.
 func (g *Git) WorktreeAddDetached(path, commit string) error {
 	return g.RunOK("worktree", "add", "-f", "--detach", path, commit)
 }

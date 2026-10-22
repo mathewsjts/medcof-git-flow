@@ -1,6 +1,6 @@
-// Command flow propaga commits de uma feature (um único PR para main) para as
-// branches de ambiente (dev/hom) por cherry-pick, com rastreabilidade e um
-// fluxo de conflito que nunca resolve sozinho.
+// Command flow propaga commits de uma feature (com base em main) para as
+// branches de ambiente (dev/hom) por cherry-pick; num conflito, deixa o
+// desenvolvedor na branch do ambiente para resolver.
 package main
 
 import (
@@ -45,23 +45,31 @@ func bootstrap(cmd *cobra.Command) (*flow.App, error) {
 
 func newDevCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "dev",
-		Short: "Aplica os commits do PR da branch atual no ambiente dev",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Use:   "dev [pr|branch]",
+		Short: "Aplica em dev os commits do PR ou da branch (padrão: branch atual)",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			app, err := bootstrap(cmd)
 			if err != nil {
 				return err
 			}
-			return app.Dev()
+			return app.Dev(argOrEmpty(args))
 		},
 	}
+}
+
+// argOrEmpty devolve o argumento opcional do alvo.
+func argOrEmpty(args []string) string {
+	if len(args) == 0 {
+		return ""
+	}
+	return args[0]
 }
 
 func newSetupCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "setup",
-		Short: "Checa pré-requisitos (git, gh) e ativa rerere no repo local",
+		Short: "Checa pré-requisitos (git, gh)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			wd, err := os.Getwd()

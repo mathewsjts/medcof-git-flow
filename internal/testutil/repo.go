@@ -35,7 +35,6 @@ func NewRepo(t *testing.T, envBranches ...string) *Repo {
 	r.config("user.email", "dev@example.com")
 	r.config("user.name", "Dev Example")
 	r.config("commit.gpgsign", "false")
-	r.config("rerere.enabled", "true")
 	// Remote origin SSH-like para exercitar a normalização quando necessário.
 	// (mantemos a URL real do clone para permitir push.)
 
@@ -167,6 +166,7 @@ func runGit(t *testing.T, dir string, args ...string) string {
 		"LC_ALL=C",
 		"GIT_AUTHOR_NAME=Dev Example", "GIT_AUTHOR_EMAIL=dev@example.com",
 		"GIT_COMMITTER_NAME=Dev Example", "GIT_COMMITTER_EMAIL=dev@example.com",
+		"GIT_EDITOR=true",
 	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
