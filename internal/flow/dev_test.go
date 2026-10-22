@@ -198,7 +198,35 @@ func TestDevRejectsMergeCommits(t *testing.T) {
 
 	app, _ := testApp(t, r, testutil.NewGHMock())
 	err := app.Dev("feature/x")
-	if err == nil || !strings.Contains(err.Error(), "merge commits") {
-		t.Fatalf("esperava recusa por merge commits, veio: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "merge side (merge commit)") {
+		t.Fatalf("esperava recusa listando o merge commit, veio: %v", err)
+	}
+}
+
+func TestDevRejectsBranchCreatedFromEnv(t *testing.T) {
+	r := testutil.NewRepo(t)
+	gh := testutil.NewGHMock()
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	openPR(gh, 2, "feature/y")
+	app, _ := testApp(t, r, gh)
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+
+	// feature/y nasce de origin/dev, que tem o cherry-pick de feature/x.
+	r.Fetch()
+	r.RunGit("checkout", "-b", "feature/y", "origin/dev")
+	r.CommitFile("src/y.txt", "y\n", "feat: y")
+	r.Push("feature/y")
+	r.Checkout("main", false)
+
+	err := app.Hom("feature/y")
+	if err == nil {
+		t.Fatal("esperava recusa de branch criada a partir de dev")
+	}
+	for _, want := range []string{"feat: src/a.txt (cherry-pick)", "git rebase -i origin/main"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("erro sem %q: %v", want, err)
+		}
 	}
 }

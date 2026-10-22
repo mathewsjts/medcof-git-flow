@@ -3,6 +3,7 @@ package flow
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/mathewsjts/medcof-git-flow/internal/git"
 )
@@ -31,16 +32,26 @@ func (a *App) Env(logical string) (Env, error) {
 }
 
 // featureCommits devolve os commits de produção..ref, do mais antigo ao mais
-// novo, recusando merge commits.
+// novo. Recusa merge commits e commits com "(cherry picked from commit X)":
+// são sinal de branch criada a partir de dev/hom (ou que fez merge deles), e
+// levariam a história própria do ambiente para os outros ambientes e para main.
 func (a *App) featureCommits(ref string) ([]git.LogCommit, error) {
 	commits, err := a.Git.Log("origin/"+a.Repo.Production+".."+ref, true)
 	if err != nil {
 		return nil, err
 	}
+	var bad []string
 	for _, c := range commits {
-		if len(c.Parents) > 1 {
-			return nil, fmt.Errorf("a branch tem merge commits em relação a %s; faça `git rebase origin/%s` para linearizar", a.Repo.Production, a.Repo.Production)
+		switch {
+		case len(c.Parents) > 1:
+			bad = append(bad, fmt.Sprintf("  %s %s (merge commit)", c.Short(), c.Subject()))
+		case cherryFrom(c) != "":
+			bad = append(bad, fmt.Sprintf("  %s %s (cherry-pick)", c.Short(), c.Subject()))
 		}
+	}
+	if len(bad) > 0 {
+		return nil, fmt.Errorf("a branch tem commits que parecem vir de um ambiente (branch criada a partir de dev/hom ou merge deles):\n%s\nrefaça a base em origin/%s mantendo só os seus commits (ex.: `git rebase -i origin/%s`)",
+			strings.Join(bad, "\n"), a.Repo.Production, a.Repo.Production)
 	}
 	return commits, nil
 }
