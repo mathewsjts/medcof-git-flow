@@ -10,6 +10,7 @@ type PR struct {
 	BaseRefName    string
 	HeadRefName    string
 	ReviewDecision string // APPROVED, CHANGES_REQUESTED, REVIEW_REQUIRED, ""
+	Approvals      int    // reviewers cujo review mais recente é APPROVED
 	URL            string
 }
 

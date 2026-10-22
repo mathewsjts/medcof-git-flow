@@ -13,7 +13,7 @@ func (a *App) Status(arg string) error {
 		return err
 	}
 	if t.PR != nil {
-		a.UI.Info("PR #%d (%s): %s, %s", t.PR.Number, t.Branch, t.PR.Title, reviewLabel(t.PR.ReviewDecision))
+		a.UI.Info("PR #%d (%s): %s, %s", t.PR.Number, t.Branch, t.PR.Title, reviewLabel(*t.PR))
 	} else {
 		a.UI.Info("%s (sem PR aberto para %s)", t.Branch, a.Repo.Production)
 	}

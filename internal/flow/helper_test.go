@@ -28,7 +28,7 @@ func testApp(t *testing.T, r *testutil.Repo, gh *testutil.GHMock) (*App, *bytes.
 
 // openPR registra um PR aberto e aprovado com base main e head na branch dada.
 func openPR(gh *testutil.GHMock, num int, head string) github.PR {
-	pr := github.PR{Number: num, State: "OPEN", BaseRefName: "main", HeadRefName: head, ReviewDecision: "APPROVED"}
+	pr := github.PR{Number: num, State: "OPEN", BaseRefName: "main", HeadRefName: head, ReviewDecision: "APPROVED", Approvals: 1}
 	gh.AddPR(pr)
 	return pr
 }

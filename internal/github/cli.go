@@ -45,7 +45,7 @@ func (c *CLI) AuthStatus() error {
 	return nil
 }
 
-const prJSONFields = "number,title,state,baseRefName,headRefName,reviewDecision,url"
+const prJSONFields = "number,title,state,baseRefName,headRefName,reviewDecision,latestReviews,url"
 
 // prJSON espelha a saída de `gh pr view/list --json`.
 type prJSON struct {
@@ -55,10 +55,19 @@ type prJSON struct {
 	BaseRefName    string `json:"baseRefName"`
 	HeadRefName    string `json:"headRefName"`
 	ReviewDecision string `json:"reviewDecision"`
-	URL            string `json:"url"`
+	LatestReviews  []struct {
+		State string `json:"state"`
+	} `json:"latestReviews"`
+	URL string `json:"url"`
 }
 
 func (p prJSON) toPR() PR {
+	approvals := 0
+	for _, r := range p.LatestReviews {
+		if r.State == "APPROVED" {
+			approvals++
+		}
+	}
 	return PR{
 		Number:         p.Number,
 		Title:          p.Title,
@@ -66,6 +75,7 @@ func (p prJSON) toPR() PR {
 		BaseRefName:    p.BaseRefName,
 		HeadRefName:    p.HeadRefName,
 		ReviewDecision: p.ReviewDecision,
+		Approvals:      approvals,
 		URL:            p.URL,
 	}
 }

@@ -51,3 +51,36 @@ func TestHomRejectsUnapprovedPR(t *testing.T) {
 		t.Fatal("nada deveria ir para hom")
 	}
 }
+
+// O ruleset de merge pode exigir mais aprovações ou code owner; para hom basta
+// um approve.
+func TestHomAcceptsPRApprovedBelowMergeRules(t *testing.T) {
+	r := testutil.NewRepo(t)
+	gh := testutil.NewGHMock()
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	pr := openPR(gh, 5, "feature/x")
+	pr.ReviewDecision = "REVIEW_REQUIRED"
+	gh.AddPR(pr)
+	app, _ := testApp(t, r, gh)
+
+	if err := app.Hom("5"); err != nil {
+		t.Fatalf("Hom: %v", err)
+	}
+	envHasFile(t, r, "hom", "src/a.txt", "a1")
+}
+
+func TestHomRejectsPRWithoutApproval(t *testing.T) {
+	r := testutil.NewRepo(t)
+	gh := testutil.NewGHMock()
+	featureBranch(r, [2]string{"src/a.txt", "a1\n"})
+	pr := openPR(gh, 5, "feature/x")
+	pr.ReviewDecision = "REVIEW_REQUIRED"
+	pr.Approvals = 0
+	gh.AddPR(pr)
+	app, _ := testApp(t, r, gh)
+
+	err := app.Hom("5")
+	if err == nil || !strings.Contains(err.Error(), "aguardando review") {
+		t.Fatalf("esperava recusa por PR sem approve, veio: %v", err)
+	}
+}

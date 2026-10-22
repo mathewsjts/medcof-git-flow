@@ -33,7 +33,7 @@ argumento, usa a branch atual.
 |---|---|
 | `flow setup` | Checa `git` e `gh`. |
 | `flow dev [pr\|branch]` | Aplica em **dev** os commits da branch que ainda não estão lá e faz push. A branch não precisa ter PR. |
-| `flow hom [pr\|branch]` | Igual ao `dev`, em **hom**. Exige PR aberto para `main` e **aprovado**. |
+| `flow hom [pr\|branch]` | Igual ao `dev`, em **hom**. Exige PR aberto para `main` com ao menos um **approve** e sem mudanças pedidas (não exige o mínimo de aprovações nem code owner do merge). |
 | `flow status [pr\|branch]` | Para cada ambiente: aplicado, parcial (lista o que falta) ou ausente. |
 
 As mensagens mostram o nome lógico e a branch real, ex.: `dev (develop)`.
