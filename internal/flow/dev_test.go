@@ -228,10 +228,10 @@ func TestDevSkipsMergeFromProduction(t *testing.T) {
 	}
 }
 
-func TestDevRejectsMergeCommits(t *testing.T) {
+func TestDevAcceptsMergeOfOtherFeature(t *testing.T) {
 	r := testutil.NewRepo(t)
 
-	// feature com um merge commit no intervalo.
+	// feature com merge de outra feature, que vai junto como dependência.
 	r.Checkout("feature/x", true)
 	r.CommitFile("src/a.txt", "a1\n", "feat: a")
 	r.Checkout("side", true)
@@ -242,10 +242,144 @@ func TestDevRejectsMergeCommits(t *testing.T) {
 	r.Checkout("main", false)
 
 	app, _ := testApp(t, r, testutil.NewGHMock())
-	err := app.Dev("feature/x")
-	if err == nil || !strings.Contains(err.Error(), "merge side (merge commit)") {
-		t.Fatalf("esperava recusa listando o merge commit, veio: %v", err)
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
 	}
+	envHasFile(t, r, "dev", "src/a.txt", "a1")
+	envHasFile(t, r, "dev", "src/s.txt", "s1")
+}
+
+func TestDevAcceptsPullMerge(t *testing.T) {
+	r := testutil.NewRepo(t)
+
+	// `git pull` sem rebase: o remoto andou e a branch local fez merge dele.
+	r.Checkout("feature/x", true)
+	r.CommitFile("src/a.txt", "a1\n", "feat: a")
+	r.Push("feature/x")
+	r.CommitFile("src/b.txt", "b1\n", "feat: b")
+	r.Push("feature/x")
+	r.RunGit("reset", "-q", "--hard", "HEAD~1")
+	r.CommitFile("src/c.txt", "c1\n", "feat: c")
+	r.RunGit("merge", "--no-ff", "-m", "Merge branch 'feature/x' of origin into feature/x", "origin/feature/x")
+	r.RunGit("push", "-q", "origin", "feature/x")
+	r.Checkout("main", false)
+
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	for _, f := range []string{"a", "b", "c"} {
+		envHasFile(t, r, "dev", "src/"+f+".txt", f+"1")
+	}
+}
+
+func TestDevRejectsMergeWithOwnChanges(t *testing.T) {
+	r := testutil.NewRepo(t)
+
+	// merge de outra feature com trabalho novo dentro do próprio merge commit.
+	r.Checkout("feature/x", true)
+	r.CommitFile("src/a.txt", "a1\n", "feat: a")
+	r.Checkout("side", true)
+	r.CommitFile("src/s.txt", "s1\n", "feat: side")
+	r.Checkout("feature/x", false)
+	r.RunGit("merge", "--no-ff", "--no-commit", "side")
+	r.WriteFile("src/extra.txt", "e\n")
+	r.RunGit("add", "-A")
+	r.RunGit("commit", "-q", "-m", "feat: extra")
+	r.Push("feature/x")
+	r.Checkout("main", false)
+
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	err := app.Dev("feature/x")
+	if err == nil {
+		t.Fatal("esperava recusa do merge com alterações próprias")
+	}
+	for _, want := range []string{"feat: extra", "alterações próprias", "git reset --soft origin/main"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("erro sem %q: %v", want, err)
+		}
+	}
+}
+
+func TestDevAcceptsMergeWithOwnChangesAlreadyInEnvs(t *testing.T) {
+	r := testutil.NewRepo(t)
+
+	// fluxo antigo: a feature, com o merge de trabalho próprio, foi mergeada
+	// em dev e hom; depois ganhou mais um commit.
+	r.Checkout("feature/x", true)
+	r.CommitFile("src/a.txt", "a1\n", "feat: a")
+	r.Checkout("side", true)
+	r.CommitFile("src/s.txt", "s1\n", "feat: side")
+	r.Checkout("feature/x", false)
+	r.RunGit("merge", "--no-ff", "--no-commit", "side")
+	r.WriteFile("src/extra.txt", "e\n")
+	r.RunGit("add", "-A")
+	r.RunGit("commit", "-q", "-m", "feat: extra")
+	for _, env := range []string{"dev", "hom"} {
+		r.Checkout(env, false)
+		r.RunGit("merge", "--no-ff", "-m", "merge feature/x", "feature/x")
+		r.Push(env)
+	}
+	r.Checkout("feature/x", false)
+	r.CommitFile("src/b.txt", "b1\n", "feat: b")
+	r.Push("feature/x")
+	r.Checkout("main", false)
+
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	envHasFile(t, r, "dev", "src/extra.txt", "e")
+	envHasFile(t, r, "dev", "src/b.txt", "b1")
+}
+
+func TestDevRejectsMergeOfEnv(t *testing.T) {
+	r := testutil.NewRepo(t)
+
+	// dev tem um commit próprio que a feature traz por merge.
+	r.Checkout("dev", false)
+	r.CommitFile("src/dev-only.txt", "d\n", "chore: dev only")
+	r.Push("dev")
+	r.Checkout("main", false)
+	r.Checkout("feature/x", true)
+	r.CommitFile("src/a.txt", "a1\n", "feat: a")
+	r.RunGit("merge", "--no-ff", "-m", "Merge branch 'dev' into feature/x", "dev")
+	r.Push("feature/x")
+	r.Checkout("main", false)
+
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	err := app.Dev("feature/x")
+	if err == nil || !strings.Contains(err.Error(), "Merge branch 'dev' into feature/x (merge de ambiente)") {
+		t.Fatalf("esperava recusa listando o merge de dev, veio: %v", err)
+	}
+}
+
+func TestDevAcceptsMergeOfEnvMergeAlreadyInProduction(t *testing.T) {
+	r := testutil.NewRepo(t)
+
+	// feature/y entra em hom por merge de PR e depois em main; feature/x faz
+	// merge do merge de hom, que não traz nada além de produção.
+	r.Checkout("feature/y", true)
+	r.CommitFile("src/y.txt", "y\n", "feat: y")
+	r.Push("feature/y")
+	r.Checkout("hom", false)
+	r.RunGit("merge", "--no-ff", "-m", "Merge pull request #7 from feature/y", "feature/y")
+	r.Push("hom")
+	r.Checkout("main", false)
+	r.RunGit("merge", "--no-ff", "-m", "Merge pull request #9 from feature/y", "feature/y")
+	r.Push("main")
+	r.Checkout("feature/x", true)
+	r.RunGit("reset", "-q", "--hard", "main~1")
+	r.CommitFile("src/a.txt", "a1\n", "feat: a")
+	r.RunGit("merge", "--no-ff", "-m", "merge hom", "hom")
+	r.Push("feature/x")
+	r.Checkout("main", false)
+
+	app, _ := testApp(t, r, testutil.NewGHMock())
+	if err := app.Dev("feature/x"); err != nil {
+		t.Fatalf("Dev: %v", err)
+	}
+	envHasFile(t, r, "dev", "src/a.txt", "a1")
 }
 
 func TestDevRejectsBranchCreatedFromEnv(t *testing.T) {

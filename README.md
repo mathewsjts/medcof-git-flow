@@ -11,7 +11,7 @@ config nos repositórios das apps.
 
 ## Pré-requisitos
 
-- `git` ≥ 2.31
+- `git` ≥ 2.36
 - `gh` autenticado (`gh auth login`)
 
 ## Instalação

@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -36,11 +37,16 @@ func (a *App) Env(logical string) (Env, error) {
 }
 
 // featureCommits devolve os commits de produção..ref, do mais antigo ao mais
-// novo. Merges de produção na feature são pulados: não trazem nada além de
-// produção (exceto resolução de conflito, que fica de fora). Recusa os demais
-// merge commits e commits com "(cherry picked from commit X)": são sinal de
-// branch criada a partir de dev/hom (ou que fez merge deles), e levariam a
-// história própria do ambiente para os outros ambientes e para main.
+// novo. Merge commits são pulados: os commits que eles trazem já estão na
+// lista, seja de produção (que não entra), da própria feature (`git pull` sem
+// rebase) ou de outra feature (dependência). Merges de produção são pulados
+// mesmo com resolução de conflito, que fica de fora; os demais merges com
+// alterações próprias são recusados, porque elas se perderiam, a não ser que o
+// merge já esteja em todos os ambientes. Também recusa
+// merges que trazem commits de um ambiente e commits com "(cherry picked from
+// commit X)": são sinal de branch criada a partir de dev/hom (ou que fez merge
+// deles), e levariam a história própria do ambiente para os outros ambientes e
+// para main.
 func (a *App) featureCommits(ref string) ([]git.LogCommit, error) {
 	prod := "origin/" + a.Repo.Production
 	all, err := a.Git.Log(prod+".."+ref, true)
@@ -48,34 +54,103 @@ func (a *App) featureCommits(ref string) ([]git.LogCommit, error) {
 		return nil, err
 	}
 	var commits []git.LogCommit
-	var bad []string
+	var fromEnv, ownChanges []string
 	for _, c := range all {
-		switch {
-		case len(c.Parents) > 1 && a.allIn(c.Parents[1:], prod):
+		line := fmt.Sprintf("  %s %s", c.Short(), c.Subject())
+		if len(c.Parents) > 1 {
+			kind, err := a.classifyMerge(c, prod)
+			if err != nil {
+				return nil, err
+			}
+			switch kind {
+			case mergeOwnChanges:
+				ownChanges = append(ownChanges, line)
+			case mergeFromEnv:
+				fromEnv = append(fromEnv, line+" (merge de ambiente)")
+			}
 			continue
-		case len(c.Parents) > 1:
-			bad = append(bad, fmt.Sprintf("  %s %s (merge commit)", c.Short(), c.Subject()))
-		case cherryFrom(c) != "":
-			bad = append(bad, fmt.Sprintf("  %s %s (cherry-pick)", c.Short(), c.Subject()))
-		default:
-			commits = append(commits, c)
 		}
+		if cherryFrom(c) != "" {
+			fromEnv = append(fromEnv, line+" (cherry-pick)")
+			continue
+		}
+		commits = append(commits, c)
 	}
-	if len(bad) > 0 {
-		return nil, fmt.Errorf("a branch tem commits que parecem vir de um ambiente (branch criada a partir de dev/hom ou merge deles):\n%s\nrefaça a base em origin/%s mantendo só os seus commits (ex.: `git rebase -i origin/%s`)",
-			strings.Join(bad, "\n"), a.Repo.Production, a.Repo.Production)
+	var msgs []string
+	if len(fromEnv) > 0 {
+		msgs = append(msgs, fmt.Sprintf("a branch tem commits que parecem vir de um ambiente (branch criada a partir de dev/hom ou merge deles):\n%s\nrefaça a base em origin/%s mantendo só os seus commits (ex.: `git rebase -i origin/%s`)",
+			strings.Join(fromEnv, "\n"), a.Repo.Production, a.Repo.Production))
+	}
+	if len(ownChanges) > 0 {
+		msgs = append(msgs, fmt.Sprintf("a branch tem merge commits com alterações próprias, que o flow não aplica (só aplica commits comuns):\n%s\njunte a branch num commit comum sem perder essas alterações (rebase descarta merges): `git merge origin/%s && git reset --soft origin/%s && git commit`, e `git push --force-with-lease`",
+			strings.Join(ownChanges, "\n"), a.Repo.Production, a.Repo.Production))
+	}
+	if len(msgs) > 0 {
+		return nil, errors.New(strings.Join(msgs, "\n\n"))
 	}
 	return commits, nil
 }
 
-// allIn informa se todos os parents já estão em ref.
-func (a *App) allIn(parents []string, ref string) bool {
-	for _, p := range parents {
-		if !a.Git.IsAncestor(p, ref) {
-			return false
+type mergeKind int
+
+const (
+	mergeClean      mergeKind = iota // pulado sem perda
+	mergeOwnChanges                  // tem alterações além das que traz
+	mergeFromEnv                     // traz commits de um ambiente
+)
+
+// classifyMerge decide o que fazer com o merge c. São limpos os merges que só
+// trazem produção (mesmo com resolução de conflito) e os que já estão em todos
+// os ambientes (fluxo antigo): não há o que levar a nenhum deles. Dos demais,
+// conta como alteração própria tudo que o merge muda além do merge automático
+// dos parents (resolução de conflito inclusa), e como vindo de um ambiente os
+// commits comuns que ele traz de dev/hom: um merge de PR no ambiente cujos
+// lados já estão em produção não leva nada do ambiente adiante.
+func (a *App) classifyMerge(c git.LogCommit, prod string) (mergeKind, error) {
+	exclude := []string{"^" + c.Parents[0], "^" + prod}
+	onlyProd := true
+	for _, p := range c.Parents[1:] {
+		n, err := a.Git.Count(append([]string{p}, exclude...)...)
+		if err != nil {
+			return 0, err
+		}
+		onlyProd = onlyProd && n == 0
+	}
+	if onlyProd {
+		return mergeClean, nil
+	}
+	var envs []string
+	inAllEnvs := true
+	for _, e := range a.Repo.Envs() {
+		b, _ := a.Repo.Branch(e)
+		envs = append(envs, "^origin/"+b)
+		inAllEnvs = inAllEnvs && a.Git.IsAncestor(c.SHA, "origin/"+b)
+	}
+	if inAllEnvs {
+		return mergeClean, nil
+	}
+	own, err := a.Git.MergeHasOwnChanges(c.SHA)
+	if err != nil {
+		return 0, err
+	}
+	if own {
+		return mergeOwnChanges, nil
+	}
+	exclude = append(exclude, "--no-merges")
+	for _, p := range c.Parents[1:] {
+		side, err := a.Git.Count(append([]string{p}, exclude...)...)
+		if err != nil {
+			return 0, err
+		}
+		notInEnv, err := a.Git.Count(append(append([]string{p}, exclude...), envs...)...)
+		if err != nil {
+			return 0, err
+		}
+		if notInEnv < side {
+			return mergeFromEnv, nil
 		}
 	}
-	return true
+	return mergeClean, nil
 }
 
 // missing separa os commits da feature entre os que faltam no ambiente e os que

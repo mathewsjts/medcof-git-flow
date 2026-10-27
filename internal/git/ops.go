@@ -3,6 +3,7 @@ package git
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -49,6 +50,25 @@ func (g *Git) RevListRange(rng string, reverse, noMerges bool) ([]string, error)
 		return nil, err
 	}
 	return Lines(out), nil
+}
+
+// Count devolve quantos commits as revisões selecionam (ex.: "a", "^b").
+func (g *Git) Count(revs ...string) (int, error) {
+	out, err := g.Run(append([]string{"rev-list", "--count"}, revs...)...)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(out)
+}
+
+// MergeHasOwnChanges informa se o merge commit muda algo além do merge
+// automático dos parents (resolução de conflito ou alteração manual).
+func (g *Git) MergeHasOwnChanges(sha string) (bool, error) {
+	out, err := g.Run("show", "--remerge-diff", "--format=", "--name-only", sha)
+	if err != nil {
+		return false, err
+	}
+	return out != "", nil
 }
 
 // CherryEquivalent devolve o conjunto de SHAs de head (limitado por limit) cujo

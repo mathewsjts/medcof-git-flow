@@ -12,10 +12,10 @@ import (
 	"github.com/mathewsjts/medcof-git-flow/internal/ui"
 )
 
-// Versão mínima do git exigida (git rev-parse --path-format).
+// Versão mínima do git exigida (git show --remerge-diff).
 const (
 	MinGitMajor = 2
-	MinGitMinor = 31
+	MinGitMinor = 36
 )
 
 // App agrupa as dependências de um comando já resolvido para um repo gerenciado.
@@ -34,14 +34,14 @@ type Deps struct {
 	Out io.Writer
 }
 
-// CheckPrereqs valida git >= 2.38 e autenticação do gh.
+// CheckPrereqs valida a versão mínima do git e autenticação do gh.
 func CheckPrereqs(g *git.Git, gh github.Client) error {
 	ok, err := g.AtLeast(MinGitMajor, MinGitMinor)
 	if err != nil {
 		return fmt.Errorf("não foi possível verificar a versão do git: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("git %d.%d ou superior é necessário (por causa de `git rev-parse --path-format`)", MinGitMajor, MinGitMinor)
+		return fmt.Errorf("git %d.%d ou superior é necessário (por causa de `git show --remerge-diff`)", MinGitMajor, MinGitMinor)
 	}
 	if err := gh.AuthStatus(); err != nil {
 		return err
