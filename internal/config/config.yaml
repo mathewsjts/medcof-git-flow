@@ -1,0 +1,16 @@
+# Configuração embutida do CLI flow (versionada neste repo, via go:embed).
+# NÃO há arquivo de config nos repositórios das apps: tudo mora aqui.
+#
+# Cada repo é identificado por "owner/repo" (normalizado de `git remote get-url origin`).
+#   environments: mapeia o nome lógico (dev/hom) para a branch real de deploy.
+#   production:   branch de produção (merge do PR = deploy; fora do escopo do CLI).
+repos:
+  MedCof-Tech/app-apollo-api:
+    environments: { dev: dev, hom: hom }
+    production: main
+  MedCof-Tech/app-aulas-ui:
+    environments: { dev: develop, hom: hom }
+    production: main
+  MedCof-Tech/app-aqfm-api:
+    environments: { dev: dev, hom: hom }
+    production: main

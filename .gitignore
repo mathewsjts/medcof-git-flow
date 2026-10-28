@@ -1,0 +1,8 @@
+# Binários de build
+/flow
+/dist/
+*.exe
+
+# Artefatos de teste
+*.out
+*.test
